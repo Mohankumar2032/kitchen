@@ -2,29 +2,67 @@
 
 import Link from "next/link";
 import { FormEvent, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useCart } from "./CartProvider";
 import { ThemePicker } from "./ThemePicker";
 
-const NAV = [
-  { href: "/shop", label: "Shop", match: "/shop" },
-  { href: "/shop?category=mixer-grinders", label: "Mixers" },
-  { href: "/shop?category=induction", label: "Induction" },
-  { href: "/shop?category=cookware", label: "Cookware" },
-  { href: "/shop?category=packs", label: "Combos" },
-];
+export interface NavCategory {
+  slug: string;
+  label: string;
+  childSlugs: string[];
+}
 
-export function SiteHeader() {
+const NAV_LABELS: Record<string, string> = {
+  appliances: "Appliances",
+  cookware: "Cookware",
+  storage: "Storage",
+  "kitchen-tools": "Tools",
+  baking: "Baking",
+  dining: "Dining",
+  cleaning: "Cleaning",
+};
+
+export function SiteHeader({
+  availableParents = [],
+}: {
+  availableParents?: NavCategory[];
+}) {
   const { count, ready } = useCart();
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [q, setQ] = useState("");
+
+  const activeCategory = searchParams.get("category") || "";
+  const isShop = pathname === "/shop" || pathname.startsWith("/shop");
+
+  const navItems: Array<{
+    href: string;
+    label: string;
+    slug: string | null;
+    childSlugs: string[];
+  }> = [
+    { href: "/shop", label: "Shop", slug: null, childSlugs: [] },
+    ...availableParents.map((parent) => ({
+      href: `/shop?category=${parent.slug}`,
+      label: NAV_LABELS[parent.slug] || parent.label,
+      slug: parent.slug,
+      childSlugs: parent.childSlugs,
+    })),
+  ];
 
   function onSearch(e: FormEvent) {
     e.preventDefault();
     const query = q.trim();
     router.push(query ? `/shop?q=${encodeURIComponent(query)}` : "/shop");
+  }
+
+  function isActive(slug: string | null, childSlugs: string[] = []): boolean {
+    if (!isShop) return false;
+    if (!slug) return !activeCategory;
+    if (activeCategory === slug) return true;
+    return childSlugs.includes(activeCategory);
   }
 
   return (
@@ -41,7 +79,10 @@ export function SiteHeader() {
         </div>
       </div>
 
-      <div className="border-b border-border backdrop-blur" style={{ background: "var(--header-bg)" }}>
+      <div
+        className="border-b border-border backdrop-blur"
+        style={{ background: "var(--header-bg)" }}
+      >
         <div className="container-store flex items-center gap-3 py-2.5 sm:gap-4 sm:py-3">
           <Link href="/" className="flex shrink-0 items-center gap-2">
             <span className="icon-box-solid h-9 w-9">
@@ -108,22 +149,20 @@ export function SiteHeader() {
           </div>
         </form>
 
-        <nav className="container-store chips-scroll gap-1 pb-2.5">
-          {NAV.map((item) => {
-            const active =
-              item.match === "/shop"
-                ? pathname === "/shop" || pathname.startsWith("/shop")
-                : false;
-            return (
-              <Link
-                key={item.href + item.label}
-                href={item.href}
-                className={cn("nav-chip", active && "active")}
-              >
-                {item.label}
-              </Link>
-            );
-          })}
+        <nav className="container-store relative z-10 chips-scroll gap-1 pb-2.5">
+          {navItems.map((item) => (
+            <Link
+              key={item.href + item.label}
+              href={item.href}
+              scroll={false}
+              className={cn(
+                "nav-chip touch-manipulation",
+                isActive(item.slug, item.childSlugs) && "active"
+              )}
+            >
+              {item.label}
+            </Link>
+          ))}
         </nav>
       </div>
     </header>

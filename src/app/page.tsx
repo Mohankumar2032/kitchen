@@ -2,8 +2,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { ProductCard } from "@/components/storefront/ProductCard";
 import { StoreShell } from "@/components/storefront/StoreShell";
-import { getCategories, listActiveProducts } from "@/lib/store";
-import { CATEGORY_META, categoryLabel, toPublicProduct } from "@/lib/types";
+import { listActiveProducts } from "@/lib/store";
+import {
+  categoryLabel,
+  getParentCategories,
+  toPublicProduct,
+} from "@/lib/types";
 import { formatINR } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +15,7 @@ export const dynamic = "force-dynamic";
 export default async function HomePage() {
   const active = await listActiveProducts();
   const products = active.map(toPublicProduct);
-  const categories = getCategories(active);
+  const categories = getParentCategories().filter((c) => c.slug !== "packs");
   const featured = products.slice(0, 8);
   const heroProducts = products.slice(0, 3);
   const heroProduct = heroProducts[0];
@@ -31,7 +35,7 @@ export default async function HomePage() {
                 Everyday kitchen essentials for a better home
               </h1>
               <p className="mt-2 max-w-md text-[13px] leading-relaxed text-muted">
-                Storage, cutters, linens, and baking tools — clean pricing and
+                Appliances, cookware, storage, and tools — clean pricing and
                 delivery across India.
               </p>
               <div className="mt-3 flex flex-wrap gap-2 sm:mt-4">
@@ -40,10 +44,10 @@ export default async function HomePage() {
                   <i className="fa-solid fa-arrow-right" aria-hidden />
                 </Link>
                 <Link
-                  href="/shop?category=plastic-containers"
+                  href="/shop?category=storage"
                   className="btn btn-ghost px-4 sm:px-5"
                 >
-                  Storage containers
+                  Storage
                 </Link>
               </div>
               <p className="mt-2.5 text-[12px] text-muted">
@@ -159,21 +163,20 @@ export default async function HomePage() {
               View all
             </Link>
           </div>
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
             {categories.map((cat) => {
-              const meta = CATEGORY_META[cat];
               return (
                 <Link
-                  key={cat}
-                  href={`/shop?category=${cat}`}
+                  key={cat.slug}
+                  href={`/shop?category=${cat.slug}`}
                   className="panel group p-2.5 transition-all hover:-translate-y-0.5 hover:border-[var(--hover-border)] hover:shadow-[0_10px_24px_color-mix(in_srgb,var(--theme)_10%,transparent)] sm:p-3"
                 >
                   <span className="icon-box mb-1.5 h-8 w-8 transition-all group-hover:bg-[image:var(--grad-theme)] group-hover:text-white sm:h-9 sm:w-9">
-                    <i className={`fa-solid ${meta?.icon || "fa-tag"}`} aria-hidden />
+                    <i className={`fa-solid ${cat.icon || "fa-tag"}`} aria-hidden />
                   </span>
-                  <p className="font-semibold">{categoryLabel(cat)}</p>
+                  <p className="font-semibold">{categoryLabel(cat.slug)}</p>
                   <p className="mt-0.5 line-clamp-2 text-[12px] text-muted">
-                    {meta?.blurb || "Browse products"}
+                    {cat.blurb || "Browse products"}
                   </p>
                 </Link>
               );

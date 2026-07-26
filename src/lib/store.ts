@@ -13,7 +13,13 @@ import type {
 } from "./types";
 import {
   CATEGORY_META,
+  CATEGORY_TREE,
+  allCategoryDefs,
   categoryLabel,
+  getChildCategories,
+  getLeafCategories,
+  getParentCategories,
+  resolveCategorySlug,
   slugifyCategory,
 } from "./types";
 
@@ -69,6 +75,18 @@ function normalizeDb(db: Database): Database {
   if (!Array.isArray(db.products)) db.products = [];
   if (!Array.isArray(db.orders)) db.orders = [];
   if (!Array.isArray(db.enquiries)) db.enquiries = [];
+
+  db.categories = db.categories.map((category) => ({
+    ...category,
+    slug: resolveCategorySlug(category.slug),
+    parent: category.parent ?? null,
+  }));
+
+  db.products = db.products.map((product) => ({
+    ...product,
+    category: resolveCategorySlug(product.category),
+  }));
+
   return db;
 }
 
@@ -101,16 +119,14 @@ export async function listCategoryOptions(): Promise<CategoryDef[]> {
   const db = await readDb();
   const map = new Map<string, CategoryDef>();
 
-  for (const [slug, meta] of Object.entries(CATEGORY_META)) {
-    map.set(slug, {
-      slug,
-      label: meta.label,
-      icon: meta.icon,
-      blurb: meta.blurb,
-    });
+  for (const item of CATEGORY_TREE) {
+    map.set(item.slug, item);
   }
   for (const custom of db.categories ?? []) {
-    map.set(custom.slug, custom);
+    map.set(custom.slug, {
+      ...custom,
+      parent: custom.parent ?? null,
+    });
   }
   for (const product of db.products) {
     if (!map.has(product.category)) {
@@ -119,16 +135,45 @@ export async function listCategoryOptions(): Promise<CategoryDef[]> {
         label: categoryLabel(product.category, db.categories),
         icon: "fa-tag",
         blurb: "Browse products",
+        parent: null,
       });
     }
   }
 
-  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+  const parents = [...map.values()]
+    .filter((c) => !c.parent)
+    .sort((a, b) => a.label.localeCompare(b.label));
+  const ordered: CategoryDef[] = [];
+  for (const parent of parents) {
+    ordered.push(parent);
+    const children = [...map.values()]
+      .filter((c) => c.parent === parent.slug)
+      .sort((a, b) => a.label.localeCompare(b.label));
+    ordered.push(...children);
+  }
+  // Orphan custom leaves without a known parent
+  for (const item of map.values()) {
+    if (item.parent && !map.has(item.parent) && !ordered.includes(item)) {
+      ordered.push(item);
+    }
+  }
+  return ordered;
+}
+
+export async function listParentCategories(): Promise<CategoryDef[]> {
+  const categories = await listCategoryOptions();
+  return getParentCategories(categories);
+}
+
+export async function listLeafCategories(): Promise<CategoryDef[]> {
+  const categories = await listCategoryOptions();
+  return getLeafCategories(categories);
 }
 
 export async function ensureCategory(
   labelOrSlug: string,
-  label?: string
+  label?: string,
+  parent?: string | null
 ): Promise<CategoryDef> {
   const db = await readDb();
   const rawLabel = (label || labelOrSlug).trim();
@@ -136,6 +181,14 @@ export async function ensureCategory(
 
   let slug = slugifyCategory(label ? labelOrSlug : rawLabel);
   if (!slug) slug = `category-${Date.now().toString(36)}`;
+  slug = resolveCategorySlug(slug);
+
+  const parentSlug = parent ? resolveCategorySlug(parent) : null;
+  if (parentSlug) {
+    const parents = allCategoryDefs(db.categories);
+    const parentExists = parents.some((c) => c.slug === parentSlug && !c.parent);
+    if (!parentExists) throw new Error("Invalid parent category");
+  }
 
   const existing =
     (db.categories ?? []).find((c) => c.slug === slug) ||
@@ -145,6 +198,7 @@ export async function ensureCategory(
           label: CATEGORY_META[slug].label,
           icon: CATEGORY_META[slug].icon,
           blurb: CATEGORY_META[slug].blurb,
+          parent: CATEGORY_META[slug].parent ?? null,
         }
       : null);
 
@@ -155,6 +209,7 @@ export async function ensureCategory(
     label: rawLabel,
     icon: "fa-tag",
     blurb: "Browse products",
+    parent: parentSlug,
   };
   db.categories = [...(db.categories ?? []), created];
   await writeDb(db);
@@ -229,7 +284,7 @@ export async function createProduct(
   const name = input.name.trim();
   if (!name) throw new Error("Name is required");
 
-  let category = input.category.trim();
+  let category = resolveCategorySlug(input.category.trim());
   if (input.categoryLabel?.trim()) {
     const ensured = await ensureCategory(
       category || input.categoryLabel,
@@ -243,6 +298,16 @@ export async function createProduct(
   if (!category) throw new Error("Category is required");
 
   const db = await readDb();
+  const leaves = getLeafCategories(db.categories);
+  const parents = getParentCategories(db.categories);
+  const isLeaf = leaves.some((c) => c.slug === category);
+  const isParentOnly = parents.some(
+    (c) =>
+      c.slug === category && getChildCategories(c.slug, db.categories).length > 0
+  );
+  if (!isLeaf || isParentOnly) {
+    throw new Error("Pick a subcategory (not a parent category)");
+  }
 
   let slug = slugify(name) || `product-${Date.now()}`;
   const slugTaken = db.products.some((p) => p.slug === slug);

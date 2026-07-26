@@ -4,12 +4,12 @@
 :root,
 html[data-theme="light-warm"] {
   --background: #ffffff;
-  --foreground: #111827;
+  --foreground: #273142;
   --theme: #ea580c;
   --theme-hover: #c2410c;
   --theme-soft: #fff7ed;
-  --muted: #6b7280;
-  --muted-2: #9ca3af;
+  --muted: #707887;
+  --muted-2: #a2a8b2;
   --border: #f0e4d4;
   --border-strong: #e7d3bc;
   --surface: #fffaf5;
@@ -396,10 +396,16 @@ textarea {
 }
 
 .nav-chip {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
   white-space: nowrap;
   border-radius: 6px;
   padding: 8px 12px;
   color: var(--foreground);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .nav-chip:hover {

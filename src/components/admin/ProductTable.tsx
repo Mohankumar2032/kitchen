@@ -7,9 +7,11 @@ import { isUnoptimizedImage } from "@/lib/images";
 import type { CategoryDef, Product, Settings } from "@/lib/types";
 import {
   calcProfit,
-  categoryLabel,
+  categoryPathLabel,
   commissionAmount,
   effectiveCommission,
+  getChildCategories,
+  getParentCategories,
 } from "@/lib/types";
 import { cn, formatINR, formatINRPrecise } from "@/lib/utils";
 
@@ -44,7 +46,7 @@ type NewProductForm = {
 
 const EMPTY_NEW: NewProductForm = {
   name: "",
-  category: "plastic-containers",
+  category: "containers",
   type: "product",
   sellPrice: "",
   cost: "",
@@ -111,9 +113,15 @@ export function ProductTable({
   const [newForm, setNewForm] = useState<NewProductForm>(EMPTY_NEW);
   const [isAddingCategory, setIsAddingCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryParent, setNewCategoryParent] = useState("storage");
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const parentCategories = useMemo(
+    () => getParentCategories(categories).filter((c) => c.slug !== "packs"),
+    [categories]
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -257,6 +265,10 @@ export function ProductTable({
       setCategoryError("Category name must be 60 characters or fewer.");
       return;
     }
+    if (!newCategoryParent) {
+      setCategoryError("Pick a parent category.");
+      return;
+    }
 
     startTransition(async () => {
       setCategoryError(null);
@@ -265,7 +277,7 @@ export function ProductTable({
         const res = await fetch("/api/categories", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ label }),
+          body: JSON.stringify({ label, parent: newCategoryParent }),
         });
         const data = (await res.json().catch(() => null)) as {
           category?: CategoryDef;
@@ -279,12 +291,7 @@ export function ProductTable({
         }
 
         const category = data.category;
-        setCategories((current) =>
-          data.categories ??
-          [...current, category].sort((a, b) =>
-            a.label.localeCompare(b.label)
-          )
-        );
+        setCategories((current) => data.categories ?? [...current, category]);
         setNewForm((form) => ({ ...form, category: category.slug }));
         setNewCategoryName("");
         setIsAddingCategory(false);
@@ -410,18 +417,46 @@ export function ProductTable({
                   }));
                 }}
               >
-                {categories.map((category) => (
-                  <option key={category.slug} value={category.slug}>
-                    {category.label}
-                  </option>
-                ))}
-                <option value="__add_custom__">+ Add custom category</option>
+                {parentCategories.map((parent) => {
+                  const children = getChildCategories(parent.slug, categories);
+                  if (children.length === 0) {
+                    return (
+                      <option key={parent.slug} value={parent.slug}>
+                        {parent.label}
+                      </option>
+                    );
+                  }
+                  return (
+                    <optgroup key={parent.slug} label={parent.label}>
+                      {children.map((child) => (
+                        <option key={child.slug} value={child.slug}>
+                          {child.label}
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+                <option value="packs">Combo Packs</option>
+                <option value="__add_custom__">+ Add custom subcategory</option>
               </select>
             </Field>
             {isAddingCategory ? (
               <div className="rounded-[6px] border border-border bg-surface/40 p-3 sm:col-span-2 lg:col-span-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                  <Field label="New category name" className="flex-1">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_auto] sm:items-end">
+                  <Field label="Parent category">
+                    <select
+                      className="input"
+                      value={newCategoryParent}
+                      onChange={(e) => setNewCategoryParent(e.target.value)}
+                    >
+                      {parentCategories.map((parent) => (
+                        <option key={parent.slug} value={parent.slug}>
+                          {parent.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label="New subcategory name">
                     <input
                       className="input"
                       value={newCategoryName}
@@ -458,7 +493,7 @@ export function ProductTable({
                       disabled={pending}
                       onClick={createCategory}
                     >
-                      Add category
+                      Add
                     </button>
                   </div>
                 </div>
@@ -625,7 +660,7 @@ export function ProductTable({
                         {product.type}
                       </span>
                       <span className="rounded-[4px] bg-surface px-1.5 py-0.5">
-                        {categoryLabel(product.category, categories)}
+                        {categoryPathLabel(product.category, categories)}
                       </span>
                       <span
                         className={cn(

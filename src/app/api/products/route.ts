@@ -7,6 +7,7 @@ import {
 } from "@/lib/store";
 import type { ProductCreateInput } from "@/lib/store";
 import { sanitizeImageList } from "@/lib/images";
+import { getLeafCategories } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,8 +33,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
   const categories = await listCategoryOptions();
-  if (!category || !categories.some((option) => option.slug === category)) {
-    return NextResponse.json({ error: "Invalid category" }, { status: 400 });
+  const leaves = getLeafCategories(categories);
+  if (!category || !leaves.some((option) => option.slug === category)) {
+    return NextResponse.json(
+      { error: "Pick a subcategory for the product" },
+      { status: 400 }
+    );
   }
 
   let images: string[] | undefined;

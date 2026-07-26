@@ -10,9 +10,13 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  let body: { label?: string; slug?: string };
+  let body: { label?: string; slug?: string; parent?: string | null };
   try {
-    body = (await req.json()) as { label?: string; slug?: string };
+    body = (await req.json()) as {
+      label?: string;
+      slug?: string;
+      parent?: string | null;
+    };
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
@@ -31,8 +35,13 @@ export async function POST(req: Request) {
     );
   }
 
+  const parent =
+    typeof body.parent === "string" && body.parent.trim()
+      ? body.parent.trim()
+      : null;
+
   try {
-    const category = await ensureCategory(body.slug || label, label);
+    const category = await ensureCategory(body.slug || label, label, parent);
     const categories = await listCategoryOptions();
     return NextResponse.json({ category, categories }, { status: 201 });
   } catch (error) {
