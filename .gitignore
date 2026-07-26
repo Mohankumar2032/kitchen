@@ -24,6 +24,10 @@
 .DS_Store
 *.pem
 
+# local image uploads (use Vercel Blob in production)
+/public/uploads/*
+!/public/uploads/.gitkeep
+
 # debug
 npm-debug.log*
 yarn-debug.log*

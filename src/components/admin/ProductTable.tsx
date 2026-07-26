@@ -1,7 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState, useTransition } from "react";
+import { Fragment, useMemo, useState, useTransition } from "react";
+import { ImageGalleryEditor } from "@/components/admin/ImageGalleryEditor";
+import { isUnoptimizedImage } from "@/lib/images";
 import type { Product, Settings } from "@/lib/types";
 import {
   calcProfit,
@@ -22,6 +24,7 @@ type Draft = {
   platformPrice: string;
   stock: string;
   commissionPercent: string;
+  images: string[];
 };
 
 function toDraft(p: Product): Draft {
@@ -32,6 +35,7 @@ function toDraft(p: Product): Draft {
     stock: String(p.stock),
     commissionPercent:
       p.commissionPercent === null ? "" : String(p.commissionPercent),
+    images: [...p.images],
   };
 }
 
@@ -51,6 +55,7 @@ export function ProductTable({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "product" | "pack">("all");
   const [openCommissionId, setOpenCommissionId] = useState<string | null>(null);
+  const [openImagesId, setOpenImagesId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -72,6 +77,10 @@ export function ProductTable({
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], [key]: value } }));
   }
 
+  function updateImages(id: string, images: string[]) {
+    setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], images } }));
+  }
+
   function saveRow(id: string) {
     const draft = drafts[id];
     if (!draft) return;
@@ -85,6 +94,7 @@ export function ProductTable({
         draft.commissionPercent.trim() === ""
           ? null
           : Math.min(100, Math.max(0, Number(draft.commissionPercent) || 0)),
+      images: draft.images,
     };
 
     startTransition(async () => {
@@ -114,9 +124,10 @@ export function ProductTable({
           <h1 className="text-xl font-semibold text-foreground">
             Products & packs
           </h1>
-          <p className="mt-1 text-muted">
-            Add / edit products with category & image. Set Cost, Sell, Stock,
-            platform (original) price, and commission.
+          <p className="mt-1 max-w-2xl text-muted">
+            List products for your store. Source links (Meesho / others) are
+            admin-only — customers never see them. When an order comes in,
+            fulfill manually from the source.
           </p>
         </div>
         <button type="button" className="btn btn-primary" disabled title="Coming after DB setup">
@@ -175,7 +186,7 @@ export function ProductTable({
               <th>PRODUCT</th>
               <th>COST ₹</th>
               <th>SELL ₹</th>
-              <th>PLATFORM ₹</th>
+              <th>SOURCE ₹</th>
               <th>STOCK</th>
               <th>PROFIT</th>
               <th>ACTIONS</th>
@@ -194,33 +205,54 @@ export function ProductTable({
               const commission = commissionAmount(sell, commissionPct);
 
               return (
-                <tr key={product.id}>
+                <Fragment key={product.id}>
+                <tr>
                   <td>
                     <div className="flex items-center gap-3">
-                      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[6px] bg-surface">
+                      <button
+                        type="button"
+                        className="relative h-12 w-12 shrink-0 overflow-hidden rounded-[6px] bg-surface"
+                        title="Edit images"
+                        onClick={() =>
+                          setOpenImagesId((cur) =>
+                            cur === product.id ? null : product.id
+                          )
+                        }
+                      >
                         <Image
-                          src={product.images[0] || "/products/appliance-1.svg"}
+                          src={
+                            draft.images[0] ||
+                            product.images[0] ||
+                            "/products/appliance-1.svg"
+                          }
                           alt=""
                           fill
                           sizes="48px"
                           className="object-cover"
-                          unoptimized={(product.images[0] || "").endsWith(".svg")}
+                          unoptimized={isUnoptimizedImage(
+                            draft.images[0] ||
+                              product.images[0] ||
+                              "/products/appliance-1.svg"
+                          )}
                         />
-                      </div>
+                      </button>
                       <div>
                         <div className="font-medium text-foreground">
                           {product.name}
                         </div>
                         <div className="text-muted">
                           {product.type} • {product.category} • {product.status}
+                          {" • "}
+                          {draft.images.length} img
                         </div>
                         <a
                           href={product.platformUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-theme hover:text-theme"
+                          title="Open source listing to fulfill orders"
                         >
-                          {product.platformName} original
+                          Fulfill via {product.platformName || "source"}
                           <i
                             className="fa-solid fa-arrow-up-right-from-square ml-1 text-[11px]"
                             aria-hidden
@@ -261,7 +293,7 @@ export function ProductTable({
                         )
                       }
                       inputMode="decimal"
-                      title="Other platform / original price"
+                      title="Source platform price (admin only, not shown to customers)"
                     />
                   </td>
                   <td>
@@ -290,7 +322,7 @@ export function ProductTable({
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        Edit
+                        View store
                       </a>
                       <button
                         type="button"
@@ -299,6 +331,18 @@ export function ProductTable({
                         onClick={() => saveRow(product.id)}
                       >
                         Save
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        title="Images"
+                        onClick={() =>
+                          setOpenImagesId((cur) =>
+                            cur === product.id ? null : product.id
+                          )
+                        }
+                      >
+                        <i className="fa-solid fa-images" aria-hidden />
                       </button>
                       <button
                         type="button"
@@ -343,6 +387,28 @@ export function ProductTable({
                     ) : null}
                   </td>
                 </tr>
+                {openImagesId === product.id ? (
+                  <tr>
+                    <td colSpan={7} className="!bg-surface">
+                      <ImageGalleryEditor
+                        images={draft.images}
+                        disabled={pending}
+                        onChange={(images) => updateImages(product.id, images)}
+                      />
+                      <div className="mt-2 flex justify-end">
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          disabled={pending}
+                          onClick={() => saveRow(product.id)}
+                        >
+                          Save images & prices
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
             {filtered.length === 0 ? (

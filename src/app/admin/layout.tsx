@@ -9,7 +9,7 @@ export default async function AdminLayout({
   const counts = await getCounts();
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="page-shell min-h-screen">
       <AdminNav
         counts={{
           products: counts.products,

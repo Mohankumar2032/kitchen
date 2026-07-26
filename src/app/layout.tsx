@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { AppProviders } from "@/components/AppProviders";
 import "./globals.css";
 
 const inter = Inter({
@@ -10,12 +11,26 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "Kitchen — Appliances Store",
+    default: "Kitchen — Shop Kitchen Appliances",
     template: "%s | Kitchen",
   },
-  description:
-    "Kitchen appliances store with fast image loading and admin inventory tools.",
+  description: "Shop quality kitchen appliances online. Fast delivery across India.",
 };
+
+const themeInitScript = `
+(function(){
+  try {
+    var key = 'kitchen-theme';
+    var saved = localStorage.getItem(key);
+    var map = { festival: 'light-warm', ocean: 'light-ocean', emerald: 'light-emerald', rose: 'light-rose', light: 'light-warm' };
+    var allowed = ['light-warm','light-ocean','light-emerald','light-rose'];
+    var theme = allowed.indexOf(saved) >= 0 ? saved : (map[saved] || 'light-warm');
+    document.documentElement.setAttribute('data-theme', theme);
+  } catch (e) {
+    document.documentElement.setAttribute('data-theme', 'light-warm');
+  }
+})();
+`;
 
 export default function RootLayout({
   children,
@@ -23,8 +38,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} h-full`}>
+    <html lang="en" className={`${inter.variable} h-full`} suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <link
           rel="stylesheet"
           href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
@@ -33,7 +49,9 @@ export default function RootLayout({
           referrerPolicy="no-referrer"
         />
       </head>
-      <body className="min-h-full font-sans antialiased">{children}</body>
+      <body className="min-h-full font-sans antialiased">
+        <AppProviders>{children}</AppProviders>
+      </body>
     </html>
   );
 }

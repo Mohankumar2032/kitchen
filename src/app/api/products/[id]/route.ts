@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sanitizeImageList } from "@/lib/images";
 import { getProductById, updateProduct } from "@/lib/store";
 import type { ProductUpdate } from "@/lib/types";
 
@@ -41,6 +42,17 @@ export async function PATCH(req: Request, { params }: Params) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
       Object.assign(patch, { [key]: body[key] });
     }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "images")) {
+    const images = sanitizeImageList(body.images);
+    if (!images) {
+      return NextResponse.json(
+        { error: "Invalid images list" },
+        { status: 400 }
+      );
+    }
+    patch.images = images;
   }
 
   const product = await updateProduct(id, patch);

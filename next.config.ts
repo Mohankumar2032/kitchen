@@ -14,6 +14,9 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "images.meesho.com" },
       { protocol: "https", hostname: "img.meesho.com" },
       { protocol: "https", hostname: "images.unsplash.com" },
+      { protocol: "https", hostname: "*.public.blob.vercel-storage.com" },
+      // Admin may paste other source-platform CDN URLs
+      { protocol: "https", hostname: "*", pathname: "/**" },
     ],
     dangerouslyAllowSVG: true,
     contentDispositionType: "attachment",

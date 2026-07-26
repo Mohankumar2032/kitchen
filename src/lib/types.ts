@@ -1,5 +1,11 @@
 export type ProductType = "product" | "pack";
 export type ProductStatus = "active" | "inactive";
+export type OrderStatus =
+  | "new"
+  | "confirmed"
+  | "fulfilling"
+  | "shipped"
+  | "cancelled";
 
 export interface Product {
   id: string;
@@ -10,11 +16,16 @@ export interface Product {
   status: ProductStatus;
   description: string;
   images: string[];
-  /** Your purchase / supplier cost */
+  /** What you pay when fulfilling from source (admin only) */
   cost: number;
-  /** Your selling price on this store */
+  /** Customer-facing store price */
   sellPrice: number;
-  /** Original listing price on other platform (e.g. Meesho) */
+  /** Optional MRP for strikethrough display on storefront */
+  mrp?: number;
+  /**
+   * Source platform price (Meesho/Amazon/etc). Admin-only.
+   * Never expose platformName / platformUrl / platformPrice on the storefront.
+   */
   platformPrice: number;
   platformName: string;
   platformUrl: string;
@@ -24,6 +35,22 @@ export interface Product {
   createdAt: string;
   updatedAt: string;
 }
+
+/** Safe fields for customer-facing APIs / UI */
+export type PublicProduct = Pick<
+  Product,
+  | "id"
+  | "name"
+  | "slug"
+  | "category"
+  | "type"
+  | "status"
+  | "description"
+  | "images"
+  | "sellPrice"
+  | "mrp"
+  | "stock"
+>;
 
 export interface Settings {
   defaultCommissionPercent: number;
@@ -41,16 +68,44 @@ export interface Enquiry {
   status: "new" | "read" | "closed";
 }
 
-export interface Order {
-  id: string;
+export interface OrderItem {
   productId: string;
   productName: string;
   qty: number;
   sellPrice: number;
+  /** Admin fulfillment helpers — never shown to customer */
+  platformName?: string;
+  platformUrl?: string;
+}
+
+export interface Order {
+  id: string;
+  items: OrderItem[];
+  subtotal: number;
   customerName: string;
   customerPhone: string;
-  status: "new" | "confirmed" | "shipped" | "cancelled";
+  customerEmail: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  pincode: string;
+  notes: string;
+  status: OrderStatus;
   createdAt: string;
+}
+
+export interface CheckoutPayload {
+  customerName: string;
+  customerPhone: string;
+  customerEmail: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  state: string;
+  pincode: string;
+  notes?: string;
+  items: Array<{ productId: string; qty: number }>;
 }
 
 export interface Database {
@@ -79,6 +134,93 @@ export type ProductUpdate = Partial<
   >
 >;
 
+export function toPublicProduct(product: Product): PublicProduct {
+  return {
+    id: product.id,
+    name: product.name,
+    slug: product.slug,
+    category: product.category,
+    type: product.type,
+    status: product.status,
+    description: product.description,
+    images: product.images,
+    sellPrice: product.sellPrice,
+    mrp: product.mrp,
+    stock: product.stock,
+  };
+}
+
+export function discountPercent(sellPrice: number, mrp?: number): number | null {
+  if (!mrp || mrp <= sellPrice) return null;
+  return Math.round(((mrp - sellPrice) / mrp) * 100);
+}
+
+export const CATEGORY_META: Record<
+  string,
+  { label: string; icon: string; blurb: string }
+> = {
+  "plastic-containers": {
+    label: "Plastic Containers",
+    icon: "fa-box",
+    blurb: "Airtight jars & fridge organisers",
+  },
+  cutters: {
+    label: "Cutters",
+    icon: "fa-scissors",
+    blurb: "Cookie cutters & kitchen tools",
+  },
+  "kitchen-linens": {
+    label: "Kitchen Linens",
+    icon: "fa-shirt",
+    blurb: "Aprons, mats & cloth essentials",
+  },
+  "baking-tools": {
+    label: "Baking Tools",
+    icon: "fa-bread-slice",
+    blurb: "Butter paper & baking helpers",
+  },
+  "mixer-grinders": {
+    label: "Mixer Grinders",
+    icon: "fa-blender",
+    blurb: "Powerful grinding for daily cooking",
+  },
+  cookware: {
+    label: "Cookware",
+    icon: "fa-fire-burner",
+    blurb: "Pans & kadhais for every meal",
+  },
+  induction: {
+    label: "Induction",
+    icon: "fa-bolt",
+    blurb: "Fast, safe electric cooking",
+  },
+  choppers: {
+    label: "Choppers",
+    icon: "fa-scissors",
+    blurb: "Quick prep, less effort",
+  },
+  kettles: {
+    label: "Kettles",
+    icon: "fa-mug-hot",
+    blurb: "Boil water in minutes",
+  },
+  storage: {
+    label: "Storage",
+    icon: "fa-box",
+    blurb: "Keep the kitchen organised",
+  },
+  "kitchen-appliances": {
+    label: "Appliances",
+    icon: "fa-kitchen-set",
+    blurb: "Essential home appliances",
+  },
+  packs: {
+    label: "Combo Packs",
+    icon: "fa-gift",
+    blurb: "Value bundles for new homes",
+  },
+};
+
 export function calcProfit(cost: number, sellPrice: number): number {
   return Math.round((sellPrice - cost) * 100) / 100;
 }
@@ -95,4 +237,8 @@ export function commissionAmount(
   commissionPercent: number
 ): number {
   return Math.round(((sellPrice * commissionPercent) / 100) * 100) / 100;
+}
+
+export function categoryLabel(slug: string): string {
+  return CATEGORY_META[slug]?.label ?? slug.replace(/-/g, " ");
 }

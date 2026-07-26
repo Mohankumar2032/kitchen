@@ -1,6 +1,14 @@
 import { promises as fs } from "fs";
 import path from "path";
-import type { Database, Product, ProductUpdate, Settings } from "./types";
+import type {
+  CheckoutPayload,
+  Database,
+  Order,
+  OrderStatus,
+  Product,
+  ProductUpdate,
+  Settings,
+} from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "db.json");
@@ -39,6 +47,11 @@ export async function listProducts(): Promise<Product[]> {
   return db.products;
 }
 
+export async function listActiveProducts(): Promise<Product[]> {
+  const db = await readDb();
+  return db.products.filter((p) => p.status === "active");
+}
+
 export async function getProductById(id: string): Promise<Product | null> {
   const db = await readDb();
   return db.products.find((p) => p.id === id) ?? null;
@@ -67,6 +80,93 @@ export async function updateProduct(
   return next;
 }
 
+export async function listOrders(): Promise<Order[]> {
+  const db = await readDb();
+  return [...db.orders].sort(
+    (a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)
+  );
+}
+
+export async function getOrderById(id: string): Promise<Order | null> {
+  const db = await readDb();
+  return db.orders.find((o) => o.id === id) ?? null;
+}
+
+export async function createOrder(payload: CheckoutPayload): Promise<Order> {
+  const db = await readDb();
+
+  if (!payload.items?.length) {
+    throw new Error("Cart is empty");
+  }
+
+  const items = payload.items.map((line) => {
+    const product = db.products.find((p) => p.id === line.productId);
+    if (!product || product.status !== "active") {
+      throw new Error(`Product unavailable: ${line.productId}`);
+    }
+    const qty = Math.max(1, Math.floor(line.qty));
+    if (product.stock < qty) {
+      throw new Error(`Insufficient stock for ${product.name}`);
+    }
+    return {
+      product,
+      qty,
+    };
+  });
+
+  for (const { product, qty } of items) {
+    product.stock -= qty;
+    product.updatedAt = new Date().toISOString();
+  }
+
+  const orderItems = items.map(({ product, qty }) => ({
+    productId: product.id,
+    productName: product.name,
+    qty,
+    sellPrice: product.sellPrice,
+    platformName: product.platformName,
+    platformUrl: product.platformUrl,
+  }));
+
+  const subtotal = orderItems.reduce(
+    (sum, item) => sum + item.sellPrice * item.qty,
+    0
+  );
+
+  const order: Order = {
+    id: `ord-${Date.now().toString(36)}`,
+    items: orderItems,
+    subtotal,
+    customerName: payload.customerName.trim(),
+    customerPhone: payload.customerPhone.trim(),
+    customerEmail: (payload.customerEmail || "").trim(),
+    addressLine1: payload.addressLine1.trim(),
+    addressLine2: (payload.addressLine2 || "").trim(),
+    city: payload.city.trim(),
+    state: payload.state.trim(),
+    pincode: payload.pincode.trim(),
+    notes: (payload.notes || "").trim(),
+    status: "new",
+    createdAt: new Date().toISOString(),
+  };
+
+  db.orders.unshift(order);
+  await writeDb(db);
+  return order;
+}
+
+export async function updateOrderStatus(
+  id: string,
+  status: OrderStatus
+): Promise<Order | null> {
+  const db = await readDb();
+  const index = db.orders.findIndex((o) => o.id === id);
+  if (index === -1) return null;
+  db.orders[index] = { ...db.orders[index], status };
+  await writeDb(db);
+  return db.orders[index];
+}
+
 export async function getCounts() {
   const db = await readDb();
   return {
@@ -76,4 +176,8 @@ export async function getCounts() {
     ordersNew: db.orders.filter((o) => o.status === "new").length,
     enquiriesNew: db.enquiries.filter((e) => e.status === "new").length,
   };
+}
+
+export function getCategories(products: Product[]): string[] {
+  return [...new Set(products.map((p) => p.category))].sort();
 }

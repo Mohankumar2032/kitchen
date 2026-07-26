@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ThemePicker } from "@/components/storefront/ThemePicker";
 import { cn } from "@/lib/utils";
 
 type Counts = {
@@ -27,6 +28,8 @@ export function AdminNav({ counts }: { counts: Counts }) {
           <i className="fa-solid fa-kitchen-set text-theme" aria-hidden />
           Kitchen Admin
         </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <ThemePicker />
         <nav className="flex flex-wrap gap-2">
           {tabs.map((tab) => {
             const active = pathname.startsWith(tab.href);
@@ -56,6 +59,7 @@ export function AdminNav({ counts }: { counts: Counts }) {
             );
           })}
         </nav>
+        </div>
       </div>
     </header>
   );

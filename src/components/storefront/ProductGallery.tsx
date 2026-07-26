@@ -11,12 +11,12 @@ export function ProductGallery({
   images: string[];
   name: string;
 }) {
-  const list = images.length ? images : ["/products/appliance-1.svg"];
+  const list = images.length ? images : ["/products/appliance.svg"];
   const [active, setActive] = useState(0);
 
   return (
     <div className="fade-up space-y-3">
-      <div className="relative aspect-square w-full overflow-hidden rounded-[6px] bg-surface">
+      <div className="grad-media relative aspect-square overflow-hidden rounded-[6px] border border-border">
         <Image
           key={list[active]}
           src={list[active]}
@@ -24,7 +24,7 @@ export function ProductGallery({
           fill
           priority
           sizes="(max-width: 768px) 100vw, 50vw"
-          className="object-contain"
+          className="object-contain p-5 sm:p-8"
           unoptimized={list[active].endsWith(".svg")}
         />
       </div>
@@ -36,8 +36,10 @@ export function ProductGallery({
               type="button"
               onClick={() => setActive(index)}
               className={cn(
-                "relative h-16 w-16 shrink-0 overflow-hidden rounded-[6px] border",
-                index === active ? "border-theme" : "border-border"
+                "relative h-[72px] w-[72px] shrink-0 overflow-hidden rounded-[6px] border bg-white",
+                index === active
+                  ? "border-theme shadow-[0_0_0_3px_rgba(44,113,226,0.15)]"
+                  : "border-border hover:border-[#c7d7f5]"
               )}
               aria-label={`Show image ${index + 1}`}
             >
@@ -45,9 +47,9 @@ export function ProductGallery({
                 src={src}
                 alt=""
                 fill
-                sizes="64px"
+                sizes="72px"
                 loading="lazy"
-                className="object-cover"
+                className="object-contain p-2"
                 unoptimized={src.endsWith(".svg")}
               />
             </button>
