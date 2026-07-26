@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { head, put } from "@vercel/blob";
 import type {
   CheckoutPayload,
   Database,
@@ -12,19 +13,72 @@ import type {
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "db.json");
+/** Durable JSON store on Vercel (local filesystem is read-only there). */
+const BLOB_DB_PATH = "kitchen/db.json";
 
-async function ensureDir(): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+function useBlobDb(): boolean {
+  return Boolean(
+    process.env.VERCEL &&
+      (process.env.BLOB_READ_WRITE_TOKEN ||
+        process.env.BLOB_STORE_ID ||
+        process.env.VERCEL_OIDC_TOKEN)
+  );
+}
+
+function blobOpts() {
+  return process.env.BLOB_READ_WRITE_TOKEN
+    ? { token: process.env.BLOB_READ_WRITE_TOKEN }
+    : {};
+}
+
+async function readSeedDb(): Promise<Database> {
+  const raw = await fs.readFile(DB_PATH, "utf8");
+  return JSON.parse(raw) as Database;
+}
+
+async function readDbFromBlob(): Promise<Database | null> {
+  try {
+    const meta = await head(BLOB_DB_PATH, blobOpts());
+    const res = await fetch(meta.url, { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as Database;
+  } catch {
+    return null;
+  }
+}
+
+async function writeDbToBlob(db: Database): Promise<void> {
+  await put(BLOB_DB_PATH, JSON.stringify(db, null, 2), {
+    access: "public",
+    contentType: "application/json",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    cacheControlMaxAge: 60,
+    ...blobOpts(),
+  });
 }
 
 export async function readDb(): Promise<Database> {
-  await ensureDir();
+  if (useBlobDb()) {
+    const fromBlob = await readDbFromBlob();
+    if (fromBlob) return fromBlob;
+    // First deploy: seed Blob from packaged data/db.json
+    const seed = await readSeedDb();
+    await writeDbToBlob(seed);
+    return seed;
+  }
+
   const raw = await fs.readFile(DB_PATH, "utf8");
   return JSON.parse(raw) as Database;
 }
 
 export async function writeDb(db: Database): Promise<void> {
-  await ensureDir();
+  if (useBlobDb()) {
+    await writeDbToBlob(db);
+    return;
+  }
+
+  await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2), "utf8");
 }
 

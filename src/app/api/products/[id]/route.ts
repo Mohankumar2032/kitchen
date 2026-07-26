@@ -55,9 +55,16 @@ export async function PATCH(req: Request, { params }: Params) {
     patch.images = images;
   }
 
-  const product = await updateProduct(id, patch);
-  if (!product) {
-    return NextResponse.json({ error: "Product not found" }, { status: 404 });
+  try {
+    const product = await updateProduct(id, patch);
+    if (!product) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+    return NextResponse.json({ product });
+  } catch (error) {
+    console.error("Product update failed", error);
+    const message =
+      error instanceof Error ? error.message : "Could not save product";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-  return NextResponse.json({ product });
 }

@@ -178,7 +178,10 @@ export function ProductTable({
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        setMessage("Save failed. Try again.");
+        const err = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        setMessage(err?.error || "Save failed. Try again.");
         return;
       }
       const data = (await res.json()) as { product: Product };
