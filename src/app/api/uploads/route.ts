@@ -31,6 +31,14 @@ function safeExt(file: File): string {
   return match?.[1] ?? "bin";
 }
 
+function canUseBlob(): boolean {
+  return Boolean(
+    process.env.BLOB_READ_WRITE_TOKEN ||
+      process.env.BLOB_STORE_ID ||
+      process.env.VERCEL_OIDC_TOKEN
+  );
+}
+
 export async function POST(req: Request) {
   let form: FormData;
   try {
@@ -59,15 +67,29 @@ export async function POST(req: Request) {
   const ext = safeExt(file);
   const id = randomBytes(6).toString("hex");
   const pathname = `products/${Date.now()}-${id}.${ext}`;
+  const onVercel = Boolean(process.env.VERCEL);
 
   try {
-    if (process.env.BLOB_READ_WRITE_TOKEN) {
+    if (canUseBlob()) {
       const blob = await put(pathname, file, {
         access: "public",
-        token: process.env.BLOB_READ_WRITE_TOKEN,
         addRandomSuffix: false,
+        ...(process.env.BLOB_READ_WRITE_TOKEN
+          ? { token: process.env.BLOB_READ_WRITE_TOKEN }
+          : {}),
       });
       return NextResponse.json({ url: blob.url, storage: "blob" as const });
+    }
+
+    // Local filesystem only works in local/dev — Vercel is read-only
+    if (onVercel) {
+      return NextResponse.json(
+        {
+          error:
+            "File upload needs Vercel Blob. For Meesho photos, paste the image URL and click Add URL instead.",
+        },
+        { status: 503 }
+      );
     }
 
     const uploadsDir = path.join(process.cwd(), "public", "uploads");
@@ -81,6 +103,17 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error("Upload failed", error);
-    return NextResponse.json({ error: "Upload failed" }, { status: 500 });
+    const detail =
+      error instanceof Error && error.message
+        ? error.message
+        : "Upload failed";
+    return NextResponse.json(
+      {
+        error: onVercel
+          ? `${detail}. Tip: paste a Meesho/CDN image URL and click Add URL.`
+          : detail,
+      },
+      { status: 500 }
+    );
   }
 }

@@ -73,14 +73,23 @@ export function ImageGalleryEditor({
     startTransition(async () => {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch("/api/uploads", { method: "POST", body: form });
-      const data = (await res.json()) as { url?: string; error?: string };
-      if (!res.ok || !data.url) {
-        setError(data.error || "Upload failed.");
-        return;
+      try {
+        const res = await fetch("/api/uploads", { method: "POST", body: form });
+        const data = (await res.json()) as { url?: string; error?: string };
+        if (!res.ok || !data.url) {
+          setError(
+            data.error ||
+              "Upload failed. For Meesho images, paste the URL and click Add URL."
+          );
+          return;
+        }
+        onChange([...images, data.url]);
+        if (fileRef.current) fileRef.current.value = "";
+      } catch {
+        setError(
+          "Upload failed. For Meesho images, paste the URL and click Add URL."
+        );
       }
-      onChange([...images, data.url]);
-      if (fileRef.current) fileRef.current.value = "";
     });
   }
 
@@ -224,8 +233,8 @@ export function ImageGalleryEditor({
         </p>
       ) : (
         <p className="text-[11px] text-muted">
-          Paste Meesho/CDN URLs, or upload (Blob in production / local uploads
-          in dev).
+          Prefer <strong>Add URL</strong> for Meesho/CDN links. Use{" "}
+          <strong>Upload</strong> for your own photos (needs Vercel Blob online).
         </p>
       )}
     </div>
