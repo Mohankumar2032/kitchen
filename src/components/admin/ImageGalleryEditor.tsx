@@ -2,8 +2,56 @@
 
 import Image from "next/image";
 import { useRef, useState, useTransition } from "react";
-import { isUnoptimizedImage } from "@/lib/images";
+import { isEphemeralUploadPath, isUnoptimizedImage } from "@/lib/images";
 import { cn } from "@/lib/utils";
+
+function GalleryThumb({
+  src,
+  isCover,
+}: {
+  src: string;
+  isCover: boolean;
+}) {
+  const [broken, setBroken] = useState(
+    () => isEphemeralUploadPath(src)
+  );
+
+  return (
+    <div className="relative aspect-square bg-surface">
+      {broken ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-2 text-center">
+          <i
+            className="fa-regular fa-image text-lg text-muted"
+            aria-hidden
+          />
+          <span className="text-[10px] font-medium text-[var(--danger)]">
+            Missing file
+          </span>
+          <span className="line-clamp-2 break-all text-[10px] text-muted">
+            {isEphemeralUploadPath(src)
+              ? "Local upload — not on Vercel"
+              : "Broken URL"}
+          </span>
+        </div>
+      ) : (
+        <Image
+          src={src}
+          alt=""
+          fill
+          sizes="160px"
+          className="object-contain p-2"
+          unoptimized={isUnoptimizedImage(src)}
+          onError={() => setBroken(true)}
+        />
+      )}
+      {isCover ? (
+        <span className="absolute left-1.5 top-1.5 rounded-[4px] bg-theme px-1.5 py-0.5 text-[10px] font-semibold text-white">
+          Cover
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 export function ImageGalleryEditor({
   images,
@@ -27,6 +75,12 @@ export function ImageGalleryEditor({
       setError("Use an https:// Meesho/CDN URL or a /path.");
       return;
     }
+    if (url.startsWith("/uploads/")) {
+      setError(
+        "Local /uploads paths do not work on Vercel. Paste an https:// image URL or use Upload (Blob)."
+      );
+      return;
+    }
     if (images.includes(url)) {
       setError("That image is already in the gallery.");
       return;
@@ -41,6 +95,10 @@ export function ImageGalleryEditor({
 
   function removeAt(index: number) {
     onChange(images.filter((_, i) => i !== index));
+  }
+
+  function removeBroken() {
+    onChange(images.filter((src) => !isEphemeralUploadPath(src)));
   }
 
   function move(index: number, delta: number) {
@@ -94,6 +152,7 @@ export function ImageGalleryEditor({
   }
 
   const busy = disabled || pending;
+  const brokenCount = images.filter(isEphemeralUploadPath).length;
 
   return (
     <div className="space-y-3">
@@ -109,28 +168,36 @@ export function ImageGalleryEditor({
         </span>
       </div>
 
+      {brokenCount > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-[6px] border border-[#fecaca] bg-[#fef2f2] px-3 py-2 text-[12px] text-[var(--danger)]">
+          <span>
+            {brokenCount} image{brokenCount === 1 ? "" : "s"} missing on the
+            server (old local upload).
+          </span>
+          <button
+            type="button"
+            className="font-semibold underline"
+            disabled={busy}
+            onClick={removeBroken}
+          >
+            Remove missing
+          </button>
+        </div>
+      ) : null}
+
       {images.length ? (
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
           {images.map((src, index) => (
             <li
               key={`${src}-${index}`}
-              className="overflow-hidden rounded-[6px] border border-border bg-white"
+              className={cn(
+                "overflow-hidden rounded-[6px] border bg-white",
+                isEphemeralUploadPath(src)
+                  ? "border-[#fecaca]"
+                  : "border-border"
+              )}
             >
-              <div className="relative aspect-square bg-surface">
-                <Image
-                  src={src}
-                  alt=""
-                  fill
-                  sizes="160px"
-                  className="object-contain p-2"
-                  unoptimized={isUnoptimizedImage(src)}
-                />
-                {index === 0 ? (
-                  <span className="absolute left-1.5 top-1.5 rounded-[4px] bg-theme px-1.5 py-0.5 text-[10px] font-semibold text-white">
-                    Cover
-                  </span>
-                ) : null}
-              </div>
+              <GalleryThumb src={src} isCover={index === 0} />
               <div className="flex items-center justify-between gap-1 border-t border-border px-1.5 py-1.5">
                 {index === 0 ? (
                   <span className="px-1 text-[11px] font-medium text-muted">
@@ -234,7 +301,7 @@ export function ImageGalleryEditor({
       ) : (
         <p className="text-[11px] text-muted">
           Prefer <strong>Add URL</strong> for Meesho/CDN links. Use{" "}
-          <strong>Upload</strong> for your own photos (needs Vercel Blob online).
+          <strong>Upload</strong> for your own photos (Vercel Blob).
         </p>
       )}
     </div>

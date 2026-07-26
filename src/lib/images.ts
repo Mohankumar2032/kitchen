@@ -22,5 +22,15 @@ export function isImageSrc(url: string): boolean {
 }
 
 export function isUnoptimizedImage(url: string): boolean {
-  return url.endsWith(".svg") || url.includes(".svg?");
+  return (
+    url.endsWith(".svg") ||
+    url.includes(".svg?") ||
+    // Meesho / CDN URLs often fail Next image optimization; serve direct
+    url.startsWith("https://")
+  );
+}
+
+/** Local /uploads files are gitignored and missing on Vercel. */
+export function isEphemeralUploadPath(url: string): boolean {
+  return url.startsWith("/uploads/");
 }

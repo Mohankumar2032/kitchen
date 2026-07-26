@@ -62,7 +62,7 @@
       "images": [
         "/products/catalog/prod-3.png",
         "/products/catalog/prod-3-2.png",
-        "/uploads/1785062857797-3fa488f9b6b7.png"
+        "https://u4fmgydoouw7nafv.public.blob.vercel-storage.com/products/1785063920133-2a1b8949f40e.png"
       ],
       "cost": 149,
       "sellPrice": 2000,
@@ -72,7 +72,7 @@
       "stock": 35,
       "commissionPercent": null,
       "createdAt": "2026-07-26T00:00:00.000Z",
-      "updatedAt": "2026-07-26T10:50:16.768Z",
+      "updatedAt": "2026-07-26T11:05:33.586Z",
       "mrp": 249
     },
     {
