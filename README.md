@@ -35,8 +35,28 @@ npm install
 npm run dev
 ```
 
-- Shop: http://localhost:3000
-- Admin: http://localhost:3000/admin/products
+- Shop: http://localhost:3005
+- Admin: http://localhost:3005/admin/products
+
+## Deploy (Vercel)
+
+Project: [kitchora/kitchen-b527](https://vercel.com/kitchora/kitchen-b527)
+
+```bash
+# one-time (already linked locally via .vercel/)
+vercel link --yes --project=kitchen-b527 --scope=kitchora
+
+# production deploy
+vercel deploy --prod
+```
+
+Optional for image uploads in production (Vercel → Storage → Blob):
+
+```bash
+vercel env add BLOB_READ_WRITE_TOKEN
+```
+
+Note: `data/db.json` is fine for demos; writes on Vercel serverless are not durable — swap to a real DB before relying on admin/order changes in production.
 
 ## Design tokens
 

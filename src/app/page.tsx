@@ -20,18 +20,20 @@ export default async function HomePage() {
       <main>
         <section className="relative overflow-hidden border-b border-border">
           <div className="grad-hero pointer-events-none absolute inset-0" />
-          <div className="pointer-events-none absolute -right-16 top-0 h-64 w-64 rounded-full bg-[radial-gradient(circle,color-mix(in_srgb,var(--theme)_22%,transparent),transparent_70%)]" />
-          <div className="container-store relative grid items-center gap-8 py-8 sm:py-12 md:grid-cols-2 md:gap-10 md:py-16">
-            <div className="fade-up">
-              <span className="badge badge-soft">New season essentials</span>
-              <h1 className="mt-3 text-[28px] font-bold leading-[1.15] tracking-tight sm:text-[34px] md:text-[42px]">
+          <div className="pointer-events-none absolute -right-16 top-0 h-56 w-56 rounded-full bg-[radial-gradient(circle,color-mix(in_srgb,var(--theme)_22%,transparent),transparent_70%)]" />
+          <div className="container-store relative grid items-start gap-4 py-4 sm:gap-5 sm:py-5 md:grid-cols-2 md:items-center md:gap-6 md:py-6">
+            <div className="fade-up max-w-xl">
+              <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-theme">
+                Kitchen
+              </p>
+              <h1 className="mt-1.5 text-[26px] font-bold leading-[1.12] tracking-tight sm:text-[32px] md:text-[36px]">
                 Everyday kitchen essentials for a better home
               </h1>
-              <p className="mt-3 max-w-md text-[13px] leading-relaxed text-muted sm:text-[14px]">
-                Shop storage containers, cutters, linens, and baking tools.
-                Clean pricing, fast checkout, delivery across India.
+              <p className="mt-2 max-w-md text-[13px] leading-relaxed text-muted">
+                Storage, cutters, linens, and baking tools — clean pricing and
+                delivery across India.
               </p>
-              <div className="mt-5 flex flex-wrap gap-2 sm:mt-7 sm:gap-3">
+              <div className="mt-3 flex flex-wrap gap-2 sm:mt-4">
                 <Link href="/shop" className="btn btn-primary px-4 sm:px-5">
                   Shop collection
                   <i className="fa-solid fa-arrow-right" aria-hidden />
@@ -43,61 +45,47 @@ export default async function HomePage() {
                   Storage containers
                 </Link>
               </div>
-              <div className="mt-6 grid max-w-md grid-cols-3 gap-2 sm:mt-8 sm:gap-3">
-                {[
-                  ["10+", "Products"],
-                  ["COD", "Available"],
-                  ["Pan-India", "Delivery"],
-                ].map(([value, label]) => (
-                  <div key={label} className="panel px-2 py-2.5 sm:px-3 sm:py-3">
-                    <p className="text-[15px] font-bold text-theme sm:text-[16px]">
-                      {value}
-                    </p>
-                    <p className="text-[11px] text-muted sm:text-[12px]">{label}</p>
-                  </div>
-                ))}
-              </div>
+              <p className="mt-2.5 text-[12px] text-muted">
+                COD available · Pan-India delivery · Secure checkout
+              </p>
             </div>
 
             <div className="fade-up" style={{ animationDelay: "90ms" }}>
-              <div className="panel overflow-hidden shadow-[0_20px_50px_color-mix(in_srgb,var(--theme)_12%,transparent)]">
-                <div className="grad-media relative aspect-[4/3]">
-                  {heroProduct ? (
+              {heroProduct ? (
+                <Link
+                  href={`/product/${heroProduct.slug}`}
+                  className="group block overflow-hidden rounded-[6px] border border-border bg-[image:var(--grad-media)] shadow-[0_12px_32px_color-mix(in_srgb,var(--theme)_10%,transparent)] transition-transform hover:-translate-y-0.5"
+                >
+                  <div className="relative aspect-[16/11]">
                     <Image
                       src={heroProduct.images[0]}
                       alt={heroProduct.name}
                       fill
                       priority
-                      className="object-contain p-6 sm:p-8"
+                      className="object-contain p-2 sm:p-3"
                       unoptimized
                     />
-                  ) : null}
-                </div>
-                {heroProduct ? (
-                  <div className="flex items-center justify-between gap-3 border-t border-border p-3 sm:p-4">
-                    <div className="min-w-0">
-                      <p className="text-muted">Featured</p>
-                      <p className="truncate font-semibold">{heroProduct.name}</p>
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <p className="text-[16px] font-bold text-theme sm:text-[18px]">
-                        {formatINR(heroProduct.sellPrice)}
-                      </p>
-                      <Link
-                        href={`/product/${heroProduct.slug}`}
-                        className="text-theme hover:text-theme"
-                      >
-                        View product
-                      </Link>
-                    </div>
                   </div>
-                ) : null}
-              </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-border bg-white/80 px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
+                        Featured
+                      </p>
+                      <p className="truncate font-semibold group-hover:text-theme">
+                        {heroProduct.name}
+                      </p>
+                    </div>
+                    <p className="shrink-0 text-[15px] font-bold text-theme sm:text-[16px]">
+                      {formatINR(heroProduct.sellPrice)}
+                    </p>
+                  </div>
+                </Link>
+              ) : null}
             </div>
           </div>
         </section>
 
-        <section className="container-store py-6 sm:py-8">
+        <section className="container-store py-3 sm:py-4">
           <div className="trust-strip">
             {[
               ["fa-truck-fast", "Fast delivery", "Ships across India"],
@@ -116,8 +104,8 @@ export default async function HomePage() {
           </div>
         </section>
 
-        <section className="container-store pb-8 sm:pb-10">
-          <div className="mb-4 flex items-end justify-between gap-3 sm:mb-5">
+        <section className="container-store pb-5 sm:pb-6">
+          <div className="mb-2.5 flex items-end justify-between gap-3 sm:mb-3">
             <div>
               <h2 className="section-title">Shop by category</h2>
               <p className="section-sub">Find the right tools for your kitchen</p>
@@ -126,20 +114,20 @@ export default async function HomePage() {
               View all
             </Link>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
             {categories.map((cat) => {
               const meta = CATEGORY_META[cat];
               return (
                 <Link
                   key={cat}
                   href={`/shop?category=${cat}`}
-                  className="panel group p-3 transition-all hover:-translate-y-0.5 hover:border-[var(--hover-border)] hover:shadow-[0_10px_24px_color-mix(in_srgb,var(--theme)_10%,transparent)] sm:p-4"
+                  className="panel group p-2.5 transition-all hover:-translate-y-0.5 hover:border-[var(--hover-border)] hover:shadow-[0_10px_24px_color-mix(in_srgb,var(--theme)_10%,transparent)] sm:p-3"
                 >
-                  <span className="icon-box mb-2 h-9 w-9 transition-all group-hover:bg-[image:var(--grad-theme)] group-hover:text-white sm:mb-3 sm:h-10 sm:w-10">
+                  <span className="icon-box mb-1.5 h-8 w-8 transition-all group-hover:bg-[image:var(--grad-theme)] group-hover:text-white sm:h-9 sm:w-9">
                     <i className={`fa-solid ${meta?.icon || "fa-tag"}`} aria-hidden />
                   </span>
                   <p className="font-semibold">{categoryLabel(cat)}</p>
-                  <p className="mt-1 line-clamp-2 text-[12px] text-muted">
+                  <p className="mt-0.5 line-clamp-2 text-[12px] text-muted">
                     {meta?.blurb || "Browse products"}
                   </p>
                 </Link>
@@ -148,8 +136,8 @@ export default async function HomePage() {
           </div>
         </section>
 
-        <section className="container-store pb-10 sm:pb-14">
-          <div className="mb-4 flex items-end justify-between gap-3 sm:mb-5">
+        <section className="container-store pb-6 sm:pb-8">
+          <div className="mb-2.5 flex items-end justify-between gap-3 sm:mb-3">
             <div>
               <h2 className="section-title">Best sellers</h2>
               <p className="section-sub">Popular picks customers are buying</p>
@@ -158,7 +146,7 @@ export default async function HomePage() {
               Browse shop
             </Link>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
             {featured.map((product, index) => (
               <ProductCard
                 key={product.id}

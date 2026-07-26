@@ -108,14 +108,11 @@ export function ShopBrowser({
         </aside>
 
         <div className="min-w-0 space-y-4">
-          <div className="panel p-3 sm:p-4">
-            <div className="mb-3">
+          <div className="panel p-2.5 sm:p-3">
+            <div className="mb-2">
               <h1 className="section-title">
                 {category === "all" ? "Shop" : categoryLabel(category)}
               </h1>
-              <p className="section-sub">
-                {filtered.length} product{filtered.length === 1 ? "" : "s"} available
-              </p>
             </div>
 
             <div className="toolbar-row">
@@ -130,7 +127,7 @@ export function ShopBrowser({
                 />
               </div>
 
-              <label className="sort-field">
+              <label className="sort-field sort-field-inline">
                 <span>Sort by</span>
                 <select
                   className="input"
