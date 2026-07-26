@@ -108,8 +108,17 @@ export interface CheckoutPayload {
   items: Array<{ productId: string; qty: number }>;
 }
 
+export interface CategoryDef {
+  slug: string;
+  label: string;
+  icon?: string;
+  blurb?: string;
+}
+
 export interface Database {
   settings: Settings;
+  /** Custom categories added from admin (merged with built-in CATEGORY_META). */
+  categories?: CategoryDef[];
   products: Product[];
   enquiries: Enquiry[];
   orders: Order[];
@@ -239,6 +248,39 @@ export function commissionAmount(
   return Math.round(((sellPrice * commissionPercent) / 100) * 100) / 100;
 }
 
-export function categoryLabel(slug: string): string {
-  return CATEGORY_META[slug]?.label ?? slug.replace(/-/g, " ");
+export function categoryLabel(
+  slug: string,
+  custom?: CategoryDef[] | null
+): string {
+  if (CATEGORY_META[slug]?.label) return CATEGORY_META[slug].label;
+  const fromCustom = custom?.find((c) => c.slug === slug)?.label;
+  if (fromCustom) return fromCustom;
+  return slug
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function categoryMeta(
+  slug: string,
+  custom?: CategoryDef[] | null
+): { label: string; icon: string; blurb: string } {
+  const builtIn = CATEGORY_META[slug];
+  if (builtIn) return builtIn;
+  const fromCustom = custom?.find((c) => c.slug === slug);
+  return {
+    label: categoryLabel(slug, custom),
+    icon: fromCustom?.icon || "fa-tag",
+    blurb: fromCustom?.blurb || "Browse products",
+  };
+}
+
+export function slugifyCategory(label: string): string {
+  return label
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
 }

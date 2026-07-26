@@ -13,7 +13,8 @@ export default async function HomePage() {
   const products = active.map(toPublicProduct);
   const categories = getCategories(active);
   const featured = products.slice(0, 8);
-  const heroProduct = products[0];
+  const heroProducts = products.slice(0, 3);
+  const heroProduct = heroProducts[0];
 
   return (
     <StoreShell>
@@ -52,34 +53,78 @@ export default async function HomePage() {
 
             <div className="fade-up" style={{ animationDelay: "90ms" }}>
               {heroProduct ? (
-                <Link
-                  href={`/product/${heroProduct.slug}`}
-                  className="group block overflow-hidden rounded-[6px] border border-border bg-[image:var(--grad-media)] shadow-[0_12px_32px_color-mix(in_srgb,var(--theme)_10%,transparent)] transition-transform hover:-translate-y-0.5"
-                >
-                  <div className="relative aspect-[16/11]">
-                    <Image
-                      src={heroProduct.images[0]}
-                      alt={heroProduct.name}
-                      fill
-                      priority
-                      className="object-contain p-2 sm:p-3"
-                      unoptimized
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-3 border-t border-border bg-white/80 px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
-                        Featured
+                <div className="relative min-h-[290px] overflow-hidden rounded-[8px] border border-border bg-[linear-gradient(135deg,#fff8ed_0%,#fff_48%,#fff1df_100%)] p-3 shadow-[0_14px_36px_color-mix(in_srgb,var(--theme)_12%,transparent)] sm:min-h-[320px] sm:p-4">
+                  <div className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-orange-200/35 blur-2xl" />
+                  <div className="pointer-events-none absolute -bottom-12 left-1/3 h-36 w-36 rounded-full bg-yellow-200/30 blur-2xl" />
+
+                  <div className="relative mb-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-theme">
+                        Popular right now
                       </p>
-                      <p className="truncate font-semibold group-hover:text-theme">
-                        {heroProduct.name}
+                      <p className="mt-0.5 text-[13px] font-semibold">
+                        Kitchen picks you&apos;ll love
                       </p>
                     </div>
-                    <p className="shrink-0 text-[15px] font-bold text-theme sm:text-[16px]">
-                      {formatINR(heroProduct.sellPrice)}
-                    </p>
+                    <span className="rounded-full border border-orange-200 bg-white/80 px-2.5 py-1 text-[10px] font-semibold text-orange-700">
+                      New collection
+                    </span>
                   </div>
-                </Link>
+
+                  <div className="relative grid grid-cols-[minmax(0,1.45fr)_minmax(110px,0.75fr)] gap-2.5">
+                    <Link
+                      href={`/product/${heroProduct.slug}`}
+                      className="group overflow-hidden rounded-[7px] border border-white/90 bg-white shadow-sm transition-transform hover:-translate-y-0.5"
+                    >
+                      <div className="relative h-[164px] sm:h-[190px]">
+                        <Image
+                          src={heroProduct.images[0]}
+                          alt={heroProduct.name}
+                          fill
+                          priority
+                          className="object-contain p-3"
+                          unoptimized
+                        />
+                      </div>
+                      <div className="border-t border-border px-3 py-2">
+                        <p className="line-clamp-1 text-[12px] font-semibold group-hover:text-theme">
+                          {heroProduct.name}
+                        </p>
+                        <p className="mt-0.5 font-bold text-theme">
+                          {formatINR(heroProduct.sellPrice)}
+                        </p>
+                      </div>
+                    </Link>
+
+                    <div className="grid grid-rows-2 gap-2.5">
+                      {heroProducts.slice(1).map((product) => (
+                        <Link
+                          key={product.id}
+                          href={`/product/${product.slug}`}
+                          className="group flex min-h-0 flex-col overflow-hidden rounded-[7px] border border-white/90 bg-white shadow-sm transition-transform hover:-translate-y-0.5"
+                        >
+                          <div className="relative min-h-0 flex-1">
+                            <Image
+                              src={product.images[0]}
+                              alt={product.name}
+                              fill
+                              className="object-contain p-2"
+                              unoptimized
+                            />
+                          </div>
+                          <div className="border-t border-border px-2 py-1.5">
+                            <p className="line-clamp-1 text-[10px] font-semibold group-hover:text-theme">
+                              {product.name}
+                            </p>
+                            <p className="text-[11px] font-bold text-theme">
+                              {formatINR(product.sellPrice)}
+                            </p>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               ) : null}
             </div>
           </div>

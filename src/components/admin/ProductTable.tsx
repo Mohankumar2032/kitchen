@@ -4,9 +4,8 @@ import Image from "next/image";
 import { useMemo, useState, useTransition, type ReactNode } from "react";
 import { ImageGalleryEditor } from "@/components/admin/ImageGalleryEditor";
 import { isUnoptimizedImage } from "@/lib/images";
-import type { Product, Settings } from "@/lib/types";
+import type { CategoryDef, Product, Settings } from "@/lib/types";
 import {
-  CATEGORY_META,
   calcProfit,
   categoryLabel,
   commissionAmount,
@@ -40,6 +39,7 @@ type NewProductForm = {
   platformName: string;
   platformUrl: string;
   description: string;
+  images: string[];
 };
 
 const EMPTY_NEW: NewProductForm = {
@@ -53,6 +53,7 @@ const EMPTY_NEW: NewProductForm = {
   platformName: "Meesho",
   platformUrl: "",
   description: "",
+  images: [],
 };
 
 function toDraft(p: Product): Draft {
@@ -88,14 +89,17 @@ function Field({
 
 export function ProductTable({
   initialProducts,
+  initialCategories,
   settings,
   counts: initialCounts,
 }: {
   initialProducts: Product[];
+  initialCategories: CategoryDef[];
   settings: Settings;
   counts: Counts;
 }) {
   const [products, setProducts] = useState(initialProducts);
+  const [categories, setCategories] = useState(initialCategories);
   const [counts, setCounts] = useState(initialCounts);
   const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
     Object.fromEntries(initialProducts.map((p) => [p.id, toDraft(p)]))
@@ -105,6 +109,9 @@ export function ProductTable({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [newForm, setNewForm] = useState<NewProductForm>(EMPTY_NEW);
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryError, setCategoryError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -209,6 +216,7 @@ export function ProductTable({
           category: newForm.category,
           type: newForm.type,
           description: newForm.description.trim(),
+          images: newForm.images,
           cost: Number(newForm.cost) || 0,
           sellPrice: Number(newForm.sellPrice) || 0,
           platformPrice:
@@ -234,8 +242,56 @@ export function ProductTable({
       }));
       setNewForm(EMPTY_NEW);
       setShowAdd(false);
-      setEditingId(data.product!.id);
+      setEditingId(null);
       setMessage("Product added.");
+    });
+  }
+
+  function createCategory() {
+    const label = newCategoryName.trim();
+    if (!label) {
+      setCategoryError("Enter a category name.");
+      return;
+    }
+    if (label.length > 60) {
+      setCategoryError("Category name must be 60 characters or fewer.");
+      return;
+    }
+
+    startTransition(async () => {
+      setCategoryError(null);
+
+      try {
+        const res = await fetch("/api/categories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ label }),
+        });
+        const data = (await res.json().catch(() => null)) as {
+          category?: CategoryDef;
+          categories?: CategoryDef[];
+          error?: string;
+        } | null;
+
+        if (!res.ok || !data?.category) {
+          setCategoryError(data?.error || "Could not add category.");
+          return;
+        }
+
+        const category = data.category;
+        setCategories((current) =>
+          data.categories ??
+          [...current, category].sort((a, b) =>
+            a.label.localeCompare(b.label)
+          )
+        );
+        setNewForm((form) => ({ ...form, category: category.slug }));
+        setNewCategoryName("");
+        setIsAddingCategory(false);
+        setMessage(`Category "${category.label}" selected.`);
+      } catch {
+        setCategoryError("Could not add category. Check your connection.");
+      }
     });
   }
 
@@ -255,7 +311,10 @@ export function ProductTable({
           type="button"
           className="btn btn-primary min-h-10 w-full shrink-0 sm:w-auto"
           onClick={() => {
-            setShowAdd((v) => !v);
+            setShowAdd((v) => {
+              if (!v) setNewForm(EMPTY_NEW);
+              return !v;
+            });
             setMessage(null);
           }}
         >
@@ -339,17 +398,80 @@ export function ProductTable({
               <select
                 className="input"
                 value={newForm.category}
-                onChange={(e) =>
-                  setNewForm((f) => ({ ...f, category: e.target.value }))
-                }
+                onChange={(e) => {
+                  if (e.target.value === "__add_custom__") {
+                    setIsAddingCategory(true);
+                    setCategoryError(null);
+                    return;
+                  }
+                  setNewForm((form) => ({
+                    ...form,
+                    category: e.target.value,
+                  }));
+                }}
               >
-                {Object.keys(CATEGORY_META).map((slug) => (
-                  <option key={slug} value={slug}>
-                    {categoryLabel(slug)}
+                {categories.map((category) => (
+                  <option key={category.slug} value={category.slug}>
+                    {category.label}
                   </option>
                 ))}
+                <option value="__add_custom__">+ Add custom category</option>
               </select>
             </Field>
+            {isAddingCategory ? (
+              <div className="rounded-[6px] border border-border bg-surface/40 p-3 sm:col-span-2 lg:col-span-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                  <Field label="New category name" className="flex-1">
+                    <input
+                      className="input"
+                      value={newCategoryName}
+                      onChange={(e) => {
+                        setNewCategoryName(e.target.value);
+                        setCategoryError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          createCategory();
+                        }
+                      }}
+                      placeholder="For example, Serving Trays"
+                      maxLength={60}
+                      autoFocus
+                    />
+                  </Field>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-ghost min-h-10 flex-1 sm:flex-none"
+                      onClick={() => {
+                        setIsAddingCategory(false);
+                        setNewCategoryName("");
+                        setCategoryError(null);
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary min-h-10 flex-1 sm:flex-none"
+                      disabled={pending}
+                      onClick={createCategory}
+                    >
+                      Add category
+                    </button>
+                  </div>
+                </div>
+                {categoryError ? (
+                  <p
+                    className="mt-2 text-[12px] text-[var(--danger)]"
+                    role="alert"
+                  >
+                    {categoryError}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <Field label="Type">
               <select
                 className="input"
@@ -434,11 +556,23 @@ export function ProductTable({
               />
             </Field>
           </div>
+
+          <div className="mt-4 rounded-[6px] border border-border bg-surface/40 p-3 sm:p-4">
+            <ImageGalleryEditor
+              images={newForm.images}
+              disabled={pending}
+              onChange={(images) => setNewForm((f) => ({ ...f, images }))}
+            />
+          </div>
+
           <div className="mt-4 flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
             <button
               type="button"
               className="btn btn-ghost min-h-10"
-              onClick={() => setShowAdd(false)}
+              onClick={() => {
+                setShowAdd(false);
+                setNewForm(EMPTY_NEW);
+              }}
             >
               Cancel
             </button>
@@ -491,7 +625,7 @@ export function ProductTable({
                         {product.type}
                       </span>
                       <span className="rounded-[4px] bg-surface px-1.5 py-0.5">
-                        {categoryLabel(product.category)}
+                        {categoryLabel(product.category, categories)}
                       </span>
                       <span
                         className={cn(

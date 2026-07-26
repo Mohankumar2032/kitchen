@@ -233,5 +233,13 @@
     }
   ],
   "enquiries": [],
-  "orders": []
+  "orders": [],
+  "categories": [
+    {
+      "slug": "kitchen-organizer",
+      "label": "Kitchen Organizer",
+      "icon": "fa-tag",
+      "blurb": "Browse products"
+    }
+  ]
 }

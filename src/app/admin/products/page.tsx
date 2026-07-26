@@ -1,18 +1,25 @@
 import { ProductTable } from "@/components/admin/ProductTable";
-import { getCounts, getSettings, listProducts } from "@/lib/store";
+import {
+  getCounts,
+  getSettings,
+  listCategoryOptions,
+  listProducts,
+} from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminProductsPage() {
-  const [products, settings, counts] = await Promise.all([
+  const [products, settings, counts, categories] = await Promise.all([
     listProducts(),
     getSettings(),
     getCounts(),
+    listCategoryOptions(),
   ]);
 
   return (
     <ProductTable
       initialProducts={products}
+      initialCategories={categories}
       settings={settings}
       counts={{
         products: counts.products,

@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
-import { createProduct, getCounts, listProducts } from "@/lib/store";
+import {
+  createProduct,
+  getCounts,
+  listCategoryOptions,
+  listProducts,
+} from "@/lib/store";
 import type { ProductCreateInput } from "@/lib/store";
-import { CATEGORY_META } from "@/lib/types";
+import { sanitizeImageList } from "@/lib/images";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,8 +31,25 @@ export async function POST(req: Request) {
   if (!name) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
-  if (!category || !CATEGORY_META[category]) {
+  const categories = await listCategoryOptions();
+  if (!category || !categories.some((option) => option.slug === category)) {
     return NextResponse.json({ error: "Invalid category" }, { status: 400 });
+  }
+
+  let images: string[] | undefined;
+  if (body.images !== undefined) {
+    if (!Array.isArray(body.images) || body.images.length === 0) {
+      images = [];
+    } else {
+      const sanitized = sanitizeImageList(body.images);
+      if (!sanitized) {
+        return NextResponse.json(
+          { error: "Invalid images list" },
+          { status: 400 }
+        );
+      }
+      images = sanitized;
+    }
   }
 
   try {
@@ -37,7 +59,7 @@ export async function POST(req: Request) {
       type: body.type,
       status: body.status,
       description: body.description,
-      images: body.images,
+      images,
       cost: body.cost,
       sellPrice: body.sellPrice,
       mrp: body.mrp,
@@ -49,8 +71,9 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ product }, { status: 201 });
   } catch (error) {
+    console.error("Product create failed", error);
     const message =
       error instanceof Error ? error.message : "Could not create product";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

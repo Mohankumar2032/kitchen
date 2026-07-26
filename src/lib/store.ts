@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { head, put } from "@vercel/blob";
 import type {
+  CategoryDef,
   CheckoutPayload,
   Database,
   Order,
@@ -9,6 +10,11 @@ import type {
   Product,
   ProductUpdate,
   Settings,
+} from "./types";
+import {
+  CATEGORY_META,
+  categoryLabel,
+  slugifyCategory,
 } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -58,28 +64,101 @@ async function writeDbToBlob(db: Database): Promise<void> {
   });
 }
 
+function normalizeDb(db: Database): Database {
+  if (!Array.isArray(db.categories)) db.categories = [];
+  if (!Array.isArray(db.products)) db.products = [];
+  if (!Array.isArray(db.orders)) db.orders = [];
+  if (!Array.isArray(db.enquiries)) db.enquiries = [];
+  return db;
+}
+
 export async function readDb(): Promise<Database> {
   if (useBlobDb()) {
     const fromBlob = await readDbFromBlob();
-    if (fromBlob) return fromBlob;
+    if (fromBlob) return normalizeDb(fromBlob);
     // First deploy: seed Blob from packaged data/db.json
-    const seed = await readSeedDb();
+    const seed = normalizeDb(await readSeedDb());
     await writeDbToBlob(seed);
     return seed;
   }
 
   const raw = await fs.readFile(DB_PATH, "utf8");
-  return JSON.parse(raw) as Database;
+  return normalizeDb(JSON.parse(raw) as Database);
 }
 
 export async function writeDb(db: Database): Promise<void> {
+  const next = normalizeDb(db);
   if (useBlobDb()) {
-    await writeDbToBlob(db);
+    await writeDbToBlob(next);
     return;
   }
 
   await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2), "utf8");
+  await fs.writeFile(DB_PATH, JSON.stringify(next, null, 2), "utf8");
+}
+
+export async function listCategoryOptions(): Promise<CategoryDef[]> {
+  const db = await readDb();
+  const map = new Map<string, CategoryDef>();
+
+  for (const [slug, meta] of Object.entries(CATEGORY_META)) {
+    map.set(slug, {
+      slug,
+      label: meta.label,
+      icon: meta.icon,
+      blurb: meta.blurb,
+    });
+  }
+  for (const custom of db.categories ?? []) {
+    map.set(custom.slug, custom);
+  }
+  for (const product of db.products) {
+    if (!map.has(product.category)) {
+      map.set(product.category, {
+        slug: product.category,
+        label: categoryLabel(product.category, db.categories),
+        icon: "fa-tag",
+        blurb: "Browse products",
+      });
+    }
+  }
+
+  return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
+}
+
+export async function ensureCategory(
+  labelOrSlug: string,
+  label?: string
+): Promise<CategoryDef> {
+  const db = await readDb();
+  const rawLabel = (label || labelOrSlug).trim();
+  if (!rawLabel) throw new Error("Category name is required");
+
+  let slug = slugifyCategory(label ? labelOrSlug : rawLabel);
+  if (!slug) slug = `category-${Date.now().toString(36)}`;
+
+  const existing =
+    (db.categories ?? []).find((c) => c.slug === slug) ||
+    (CATEGORY_META[slug]
+      ? {
+          slug,
+          label: CATEGORY_META[slug].label,
+          icon: CATEGORY_META[slug].icon,
+          blurb: CATEGORY_META[slug].blurb,
+        }
+      : null);
+
+  if (existing) return existing;
+
+  const created: CategoryDef = {
+    slug,
+    label: rawLabel,
+    icon: "fa-tag",
+    blurb: "Browse products",
+  };
+  db.categories = [...(db.categories ?? []), created];
+  await writeDb(db);
+  return created;
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -128,6 +207,8 @@ function slugify(name: string): string {
 export type ProductCreateInput = {
   name: string;
   category: string;
+  /** When set, creates/registers a custom category with this label. */
+  categoryLabel?: string;
   type?: Product["type"];
   status?: Product["status"];
   description?: string;
@@ -145,11 +226,23 @@ export type ProductCreateInput = {
 export async function createProduct(
   input: ProductCreateInput
 ): Promise<Product> {
-  const db = await readDb();
   const name = input.name.trim();
   if (!name) throw new Error("Name is required");
-  const category = input.category.trim();
+
+  let category = input.category.trim();
+  if (input.categoryLabel?.trim()) {
+    const ensured = await ensureCategory(
+      category || input.categoryLabel,
+      input.categoryLabel.trim()
+    );
+    category = ensured.slug;
+  } else if (category && !CATEGORY_META[category]) {
+    // Persist unknown slug as a custom category for reuse in admin
+    await ensureCategory(category, categoryLabel(category));
+  }
   if (!category) throw new Error("Category is required");
+
+  const db = await readDb();
 
   let slug = slugify(name) || `product-${Date.now()}`;
   const slugTaken = db.products.some((p) => p.slug === slug);
