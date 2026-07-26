@@ -62,6 +62,75 @@ export async function getProductBySlug(slug: string): Promise<Product | null> {
   return db.products.find((p) => p.slug === slug) ?? null;
 }
 
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+export type ProductCreateInput = {
+  name: string;
+  category: string;
+  type?: Product["type"];
+  status?: Product["status"];
+  description?: string;
+  images?: string[];
+  cost?: number;
+  sellPrice?: number;
+  mrp?: number;
+  platformPrice?: number;
+  platformName?: string;
+  platformUrl?: string;
+  stock?: number;
+  commissionPercent?: number | null;
+};
+
+export async function createProduct(
+  input: ProductCreateInput
+): Promise<Product> {
+  const db = await readDb();
+  const name = input.name.trim();
+  if (!name) throw new Error("Name is required");
+  const category = input.category.trim();
+  if (!category) throw new Error("Category is required");
+
+  let slug = slugify(name) || `product-${Date.now()}`;
+  const slugTaken = db.products.some((p) => p.slug === slug);
+  if (slugTaken) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+
+  const now = new Date().toISOString();
+  const product: Product = {
+    id: `p-${Math.random().toString(36).slice(2, 8)}`,
+    name,
+    slug,
+    category,
+    type: input.type === "pack" ? "pack" : "product",
+    status: input.status === "inactive" ? "inactive" : "active",
+    description: (input.description || "").trim(),
+    images: input.images?.length ? input.images : ["/products/appliance.svg"],
+    cost: Number(input.cost) || 0,
+    sellPrice: Number(input.sellPrice) || 0,
+    mrp: input.mrp != null && input.mrp > 0 ? Number(input.mrp) : undefined,
+    platformPrice: Number(input.platformPrice) || 0,
+    platformName: (input.platformName || "Meesho").trim() || "Meesho",
+    platformUrl: (input.platformUrl || "").trim(),
+    stock: Math.max(0, Math.floor(Number(input.stock) || 0)),
+    commissionPercent:
+      input.commissionPercent === undefined || input.commissionPercent === null
+        ? null
+        : Math.min(100, Math.max(0, Number(input.commissionPercent) || 0)),
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  db.products.unshift(product);
+  await writeDb(db);
+  return product;
+}
+
 export async function updateProduct(
   id: string,
   patch: ProductUpdate

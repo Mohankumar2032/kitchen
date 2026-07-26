@@ -87,79 +87,83 @@ export function ImageGalleryEditor({
   const busy = disabled || pending;
 
   return (
-    <div className="space-y-3 rounded-[6px] border border-border bg-surface p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
         <div>
-          <div className="font-medium text-foreground">Product images</div>
-          <p className="text-muted">
-            First image is the cover. Paste Meesho CDN URLs or upload your own.
+          <p className="text-[13px] font-semibold text-foreground">Images</p>
+          <p className="text-[12px] text-muted">
+            First image is the storefront cover
           </p>
         </div>
-        <span className="text-muted">{images.length}/12</span>
+        <span className="rounded-[6px] bg-surface px-2 py-1 text-[12px] font-medium text-muted">
+          {images.length}/12
+        </span>
       </div>
 
       {images.length ? (
-        <ul className="grid gap-2 sm:grid-cols-2">
+        <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
           {images.map((src, index) => (
             <li
               key={`${src}-${index}`}
-              className="flex items-center gap-2 rounded-[6px] border border-border bg-white p-2"
+              className="overflow-hidden rounded-[6px] border border-border bg-white"
             >
-              <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-[6px] bg-surface">
+              <div className="relative aspect-square bg-surface">
                 <Image
                   src={src}
                   alt=""
                   fill
-                  sizes="56px"
-                  className="object-contain p-1"
+                  sizes="160px"
+                  className="object-contain p-2"
                   unoptimized={isUnoptimizedImage(src)}
                 />
+                {index === 0 ? (
+                  <span className="absolute left-1.5 top-1.5 rounded-[4px] bg-theme px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                    Cover
+                  </span>
+                ) : null}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[12px] text-muted" title={src}>
-                  {src}
-                </div>
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {index === 0 ? (
-                    <span className="text-[11px] font-medium text-theme">
-                      Cover
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="btn btn-ghost !px-2 !py-1 text-[11px]"
-                      disabled={busy}
-                      onClick={() => makeCover(index)}
-                    >
-                      Make cover
-                    </button>
-                  )}
+              <div className="flex items-center justify-between gap-1 border-t border-border px-1.5 py-1.5">
+                {index === 0 ? (
+                  <span className="px-1 text-[11px] font-medium text-muted">
+                    Cover
+                  </span>
+                ) : (
                   <button
                     type="button"
-                    className="btn btn-ghost !px-2 !py-1 text-[11px]"
+                    className="rounded-[4px] px-1.5 py-1 text-[11px] font-medium text-theme hover:bg-surface"
+                    disabled={busy}
+                    onClick={() => makeCover(index)}
+                  >
+                    Make cover
+                  </button>
+                )}
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 items-center justify-center rounded-[4px] text-muted hover:bg-surface hover:text-foreground disabled:opacity-40"
                     disabled={busy || index === 0}
                     onClick={() => move(index, -1)}
                     aria-label="Move earlier"
                   >
-                    <i className="fa-solid fa-arrow-up" aria-hidden />
+                    <i className="fa-solid fa-arrow-up text-[11px]" aria-hidden />
                   </button>
                   <button
                     type="button"
-                    className="btn btn-ghost !px-2 !py-1 text-[11px]"
+                    className="flex h-7 w-7 items-center justify-center rounded-[4px] text-muted hover:bg-surface hover:text-foreground disabled:opacity-40"
                     disabled={busy || index === images.length - 1}
                     onClick={() => move(index, 1)}
                     aria-label="Move later"
                   >
-                    <i className="fa-solid fa-arrow-down" aria-hidden />
+                    <i className="fa-solid fa-arrow-down text-[11px]" aria-hidden />
                   </button>
                   <button
                     type="button"
-                    className="btn btn-ghost !px-2 !py-1 text-[11px] text-danger"
+                    className="flex h-7 w-7 items-center justify-center rounded-[4px] text-muted hover:bg-[#fef2f2] hover:text-[var(--danger)] disabled:opacity-40"
                     disabled={busy}
                     onClick={() => removeAt(index)}
                     aria-label="Remove image"
                   >
-                    <i className="fa-solid fa-trash" aria-hidden />
+                    <i className="fa-solid fa-trash text-[11px]" aria-hidden />
                   </button>
                 </div>
               </div>
@@ -167,9 +171,9 @@ export function ImageGalleryEditor({
           ))}
         </ul>
       ) : (
-        <p className="rounded-[6px] border border-dashed border-border bg-white px-3 py-4 text-center text-muted">
-          No images yet — paste a URL or upload a file.
-        </p>
+        <div className="rounded-[6px] border border-dashed border-border bg-surface px-3 py-8 text-center text-[12px] text-muted">
+          No images yet — paste a CDN URL or upload a file
+        </div>
       )}
 
       <div className="flex flex-col gap-2 sm:flex-row">
@@ -188,7 +192,7 @@ export function ImageGalleryEditor({
         />
         <button
           type="button"
-          className="btn btn-ghost"
+          className="btn btn-ghost min-h-10 shrink-0"
           disabled={busy || !urlDraft.trim()}
           onClick={addUrl}
         >
@@ -197,7 +201,7 @@ export function ImageGalleryEditor({
         </button>
         <label
           className={cn(
-            "btn btn-primary cursor-pointer",
+            "btn btn-primary min-h-10 shrink-0 cursor-pointer",
             busy && "pointer-events-none opacity-55"
           )}
         >
@@ -215,15 +219,13 @@ export function ImageGalleryEditor({
       </div>
 
       {error ? (
-        <p className="text-danger" role="alert">
+        <p className="text-[12px] text-[var(--danger)]" role="alert">
           {error}
         </p>
       ) : (
-        <p className="text-muted">
-          Upload uses Vercel Blob when{" "}
-          <code className="text-[12px]">BLOB_READ_WRITE_TOKEN</code> is set;
-          otherwise files go to <code className="text-[12px]">/uploads</code>{" "}
-          locally.
+        <p className="text-[11px] text-muted">
+          Paste Meesho/CDN URLs, or upload (Blob in production / local uploads
+          in dev).
         </p>
       )}
     </div>

@@ -160,6 +160,29 @@ a:hover {
   color: var(--theme);
 }
 
+/* Keep white label text on themed active controls (global a:hover otherwise wins) */
+a.admin-tab.is-active,
+a.admin-tab.is-active:hover,
+a.admin-tab.is-active:focus,
+a.admin-tab.is-active:focus-visible {
+  color: #fff !important;
+}
+
+.pill.active,
+.pill.active:hover,
+.pill.active:focus {
+  color: #fff !important;
+}
+
+.btn-primary,
+.btn-primary:hover:not(:disabled),
+.btn-primary:focus:not(:disabled),
+.btn-danger,
+.btn-danger:hover:not(:disabled),
+.btn-danger:focus:not(:disabled) {
+  color: #fff !important;
+}
+
 button,
 input,
 select,
