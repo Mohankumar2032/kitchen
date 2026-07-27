@@ -222,6 +222,20 @@ async function loadCatalogAndOrders(): Promise<{
   return { catalog: emptyCatalog(), orders: emptyOrders() };
 }
 
+/**
+ * Seed catalog PNGs were optimized to WebP. Production Blob may still
+ * reference the deleted .png paths — rewrite them on read.
+ */
+function normalizeCatalogImagePath(url: string): string {
+  if (
+    url.startsWith("/products/catalog/") &&
+    (url.endsWith(".png") || url.endsWith(".PNG"))
+  ) {
+    return `${url.slice(0, -4)}.webp`;
+  }
+  return url;
+}
+
 function normalizeDb(db: Database): Database {
   if (!Array.isArray(db.categories)) db.categories = [];
   if (!Array.isArray(db.products)) db.products = [];
@@ -239,9 +253,20 @@ function normalizeDb(db: Database): Database {
   db.products = db.products.map((product) => ({
     ...product,
     category: resolveCategorySlug(product.category),
+    images: (product.images || []).map(normalizeCatalogImagePath),
   }));
 
   return db;
+}
+
+function catalogNeedsImagePathMigration(db: Database): boolean {
+  return db.products.some((product) =>
+    (product.images || []).some(
+      (url) =>
+        url.startsWith("/products/catalog/") &&
+        (url.endsWith(".png") || url.endsWith(".PNG"))
+    )
+  );
 }
 
 function cloneDb(db: Database): Database {
@@ -250,7 +275,20 @@ function cloneDb(db: Database): Database {
 
 async function loadDb(): Promise<Database> {
   const { catalog, orders } = await loadCatalogAndOrders();
-  return normalizeDb(composeDb(catalog, orders));
+  const composed = composeDb(catalog, orders);
+  const needsImageMigration = catalogNeedsImagePathMigration(composed);
+  const db = normalizeDb(composed);
+
+  // Persist PNG → WebP path rewrite so Blob/local catalog stops serving dead .png URLs.
+  if (needsImageMigration) {
+    try {
+      await writeCatalogDb(db);
+    } catch (error) {
+      console.error("Catalog image path migration failed", error);
+    }
+  }
+
+  return db;
 }
 
 export async function readDb(): Promise<Database> {
