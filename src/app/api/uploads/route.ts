@@ -51,14 +51,18 @@ async function storeBuffer(
   const bytes = toTransferableBytes(buffer);
 
   if (canUseBlob()) {
-    const blob = await put(pathname, new Blob([bytes], { type: contentType }), {
-      access: "public",
-      addRandomSuffix: false,
-      contentType,
-      ...(process.env.BLOB_READ_WRITE_TOKEN
-        ? { token: process.env.BLOB_READ_WRITE_TOKEN }
-        : {}),
-    });
+    const blob = await put(
+      pathname,
+      new Blob([bytes.buffer], { type: contentType }),
+      {
+        access: "public",
+        addRandomSuffix: false,
+        contentType,
+        ...(process.env.BLOB_READ_WRITE_TOKEN
+          ? { token: process.env.BLOB_READ_WRITE_TOKEN }
+          : {}),
+      }
+    );
     return blob.url;
   }
 

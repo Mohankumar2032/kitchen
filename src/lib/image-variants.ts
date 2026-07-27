@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import type { Sharp } from "sharp";
 import type { ImageVariants } from "@/lib/types";
 
 export interface GeneratedVariants {
@@ -15,10 +16,12 @@ const VARIANT_SPECS = [
 
 /**
  * Sharp/native Buffers may be SharedArrayBuffer-backed; undici and
- * @vercel/blob reject those. Always allocate a fresh non-shared copy.
+ * @vercel/blob reject those. Always allocate a fresh non-shared ArrayBuffer.
  */
-export function toTransferableBytes(data: Uint8Array | Buffer): Uint8Array {
-  const copy = new Uint8Array(data.byteLength);
+export function toTransferableBytes(
+  data: Uint8Array | Buffer
+): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(new ArrayBuffer(data.byteLength));
   copy.set(data);
   return copy;
 }
@@ -33,7 +36,7 @@ function tinyBlurDataUrl(buffer: Buffer): string {
 }
 
 async function toWebpBuffer(
-  pipeline: sharp.Sharp,
+  pipeline: Sharp,
   quality: number
 ): Promise<Buffer> {
   const { data } = await pipeline.webp({ quality }).toUint8Array();
