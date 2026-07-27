@@ -443,6 +443,9 @@ textarea {
 .product-card {
   display: flex;
   flex-direction: column;
+  content-visibility: auto;
+  contain: layout paint style;
+  contain-intrinsic-size: auto 380px;
   background: var(--grad-panel);
   border: 1px solid var(--border);
   border-radius: 6px;

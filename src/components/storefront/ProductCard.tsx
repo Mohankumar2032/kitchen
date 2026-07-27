@@ -16,7 +16,7 @@ export function ProductCard({
   const pricing = priceParts(product.sellPrice, product.mrp);
 
   return (
-    <article className="product-card group fade-up">
+    <article className="product-card group">
       <Link href={`/product/${product.slug}`} className="product-card__media block">
         <Image
           src={image}

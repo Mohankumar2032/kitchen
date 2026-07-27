@@ -27,8 +27,12 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DATA_DIR, "db.json");
 /** Durable JSON store on Vercel (local filesystem is read-only there). */
 const BLOB_DB_PATH = "kitchen/db.json";
+const READ_CACHE_TTL_MS = 2_000;
 
-function useBlobDb(): boolean {
+let cachedDb: { value: Database; expiresAt: number } | null = null;
+let pendingDbRead: Promise<Database> | null = null;
+
+function shouldUseBlobDb(): boolean {
   return Boolean(
     process.env.VERCEL &&
       (process.env.BLOB_READ_WRITE_TOKEN ||
@@ -90,8 +94,12 @@ function normalizeDb(db: Database): Database {
   return db;
 }
 
-export async function readDb(): Promise<Database> {
-  if (useBlobDb()) {
+function cloneDb(db: Database): Database {
+  return structuredClone(db);
+}
+
+async function loadDb(): Promise<Database> {
+  if (shouldUseBlobDb()) {
     const fromBlob = await readDbFromBlob();
     if (fromBlob) return normalizeDb(fromBlob);
     // First deploy: seed Blob from packaged data/db.json
@@ -104,15 +112,44 @@ export async function readDb(): Promise<Database> {
   return normalizeDb(JSON.parse(raw) as Database);
 }
 
+export async function readDb(): Promise<Database> {
+  const now = Date.now();
+  if (cachedDb && cachedDb.expiresAt > now) return cloneDb(cachedDb.value);
+
+  if (!pendingDbRead) {
+    pendingDbRead = loadDb()
+      .then((db) => {
+        cachedDb = {
+          value: cloneDb(db),
+          expiresAt: Date.now() + READ_CACHE_TTL_MS,
+        };
+        return db;
+      })
+      .finally(() => {
+        pendingDbRead = null;
+      });
+  }
+
+  return cloneDb(await pendingDbRead);
+}
+
 export async function writeDb(db: Database): Promise<void> {
   const next = normalizeDb(db);
-  if (useBlobDb()) {
+  if (shouldUseBlobDb()) {
     await writeDbToBlob(next);
+    cachedDb = {
+      value: cloneDb(next),
+      expiresAt: Date.now() + READ_CACHE_TTL_MS,
+    };
     return;
   }
 
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.writeFile(DB_PATH, JSON.stringify(next, null, 2), "utf8");
+  cachedDb = {
+    value: cloneDb(next),
+    expiresAt: Date.now() + READ_CACHE_TTL_MS,
+  };
 }
 
 export async function listCategoryOptions(): Promise<CategoryDef[]> {

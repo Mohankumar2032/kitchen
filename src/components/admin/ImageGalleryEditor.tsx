@@ -5,6 +5,48 @@ import { useRef, useState, useTransition } from "react";
 import { isEphemeralUploadPath, isUnoptimizedImage } from "@/lib/images";
 import { cn } from "@/lib/utils";
 
+const MAX_UPLOAD_SOURCE_BYTES = 20 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION = 1600;
+
+async function optimizeUpload(file: File): Promise<File> {
+  if (!["image/jpeg", "image/png"].includes(file.type)) return file;
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(
+      1,
+      MAX_IMAGE_DIMENSION / Math.max(bitmap.width, bitmap.height)
+    );
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      bitmap.close();
+      return file;
+    }
+
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", 0.82);
+    });
+    if (!blob || (scale === 1 && blob.size >= file.size)) return file;
+
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "product";
+    return new File([blob], `${baseName}.webp`, {
+      type: "image/webp",
+      lastModified: Date.now(),
+    });
+  } catch {
+    return file;
+  }
+}
+
 function GalleryThumb({
   src,
   isCover,
@@ -123,14 +165,20 @@ export function ImageGalleryEditor({
     if (!file) return;
     setError(null);
 
+    if (file.size > MAX_UPLOAD_SOURCE_BYTES) {
+      setError("Choose an image smaller than 20 MB.");
+      return;
+    }
+
     if (images.length >= 12) {
       setError("Maximum 12 images per product.");
       return;
     }
 
     startTransition(async () => {
+      const optimizedFile = await optimizeUpload(file);
       const form = new FormData();
-      form.append("file", file);
+      form.append("file", optimizedFile);
       try {
         const res = await fetch("/api/uploads", { method: "POST", body: form });
         const data = (await res.json()) as { url?: string; error?: string };
