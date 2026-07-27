@@ -1,8 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import {
+  FormEvent,
+  useEffect,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  announceShopFilter,
+  SHOP_FILTER_EVENT,
+  updateShopUrl,
+  type ShopFilterDetail,
+} from "@/lib/shop-navigation";
 import { cn } from "@/lib/utils";
 import { useCart } from "./CartProvider";
 import { ThemePicker } from "./ThemePicker";
@@ -33,9 +44,33 @@ export function SiteHeader({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [q, setQ] = useState("");
-
-  const activeCategory = searchParams.get("category") || "";
+  const [activeCategory, setActiveCategory] = useState(
+    searchParams.get("category") || ""
+  );
   const isShop = pathname === "/shop" || pathname.startsWith("/shop");
+
+  useEffect(() => {
+    function handleFilterChange(event: Event) {
+      const detail = (event as CustomEvent<ShopFilterDetail>).detail;
+      if (detail.category !== undefined) {
+        setActiveCategory(detail.category === "all" ? "" : detail.category);
+      }
+      if (detail.query !== undefined) setQ(detail.query);
+    }
+
+    function handleHistoryChange() {
+      const params = new URLSearchParams(window.location.search);
+      setActiveCategory(params.get("category") || "");
+      setQ(params.get("q") || "");
+    }
+
+    window.addEventListener(SHOP_FILTER_EVENT, handleFilterChange);
+    window.addEventListener("popstate", handleHistoryChange);
+    return () => {
+      window.removeEventListener(SHOP_FILTER_EVENT, handleFilterChange);
+      window.removeEventListener("popstate", handleHistoryChange);
+    };
+  }, []);
 
   const navItems: Array<{
     href: string;
@@ -55,7 +90,25 @@ export function SiteHeader({
   function onSearch(e: FormEvent) {
     e.preventDefault();
     const query = q.trim();
+    if (isShop) {
+      updateShopUrl({ query });
+      announceShopFilter({ query });
+      return;
+    }
     router.push(query ? `/shop?q=${encodeURIComponent(query)}` : "/shop");
+  }
+
+  function handleCategoryClick(
+    event: ReactMouseEvent<HTMLAnchorElement>,
+    slug: string | null
+  ) {
+    if (!isShop) return;
+
+    event.preventDefault();
+    const category = slug || "all";
+    setActiveCategory(slug || "");
+    updateShopUrl({ category });
+    announceShopFilter({ category });
   }
 
   function isActive(slug: string | null, childSlugs: string[] = []): boolean {
@@ -155,6 +208,7 @@ export function SiteHeader({
               key={item.href + item.label}
               href={item.href}
               scroll={false}
+              onClick={(event) => handleCategoryClick(event, item.slug)}
               className={cn(
                 "nav-chip touch-manipulation",
                 isActive(item.slug, item.childSlugs) && "active"

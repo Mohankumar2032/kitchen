@@ -23,7 +23,7 @@ export function ProductCard({
           alt={product.name}
           fill
           priority={priority}
-          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
+          sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
           className="object-contain p-3 transition-transform duration-300 group-hover:scale-[1.04] sm:p-5"
           unoptimized={image.endsWith(".svg")}
         />

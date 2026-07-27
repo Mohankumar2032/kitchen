@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import type { CategoryDef, PublicProduct } from "@/lib/types";
 import {
   categoryLabel,
@@ -10,8 +10,17 @@ import {
   getParentCategories,
   matchingCategorySlugs,
 } from "@/lib/types";
+import {
+  announceShopFilter,
+  SHOP_FILTER_EVENT,
+  updateShopUrl,
+  type ShopFilterDetail,
+} from "@/lib/shop-navigation";
 import { cn } from "@/lib/utils";
 import { ProductCard } from "./ProductCard";
+
+const PRODUCTS_PER_PAGE = 24;
+const DESKTOP_BREAKPOINT = "(min-width: 1024px)";
 
 type VisibleParent = {
   parent: CategoryDef;
@@ -112,14 +121,38 @@ export function ShopBrowser({
   initialCategory?: string;
   initialQuery?: string;
 }) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const categoryFromUrl =
     searchParams.get("category") || initialCategory || "all";
   const queryFromUrl = searchParams.get("q") || initialQuery || "";
 
-  const category = categoryFromUrl;
+  const [category, setCategory] = useState(categoryFromUrl);
   const [query, setQuery] = useState(queryFromUrl);
+  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_PAGE);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function handleFilterChange(event: Event) {
+      const detail = (event as CustomEvent<ShopFilterDetail>).detail;
+      if (detail.category !== undefined) setCategory(detail.category);
+      if (detail.query !== undefined) setQuery(detail.query);
+      setVisibleCount(PRODUCTS_PER_PAGE);
+    }
+
+    function handleHistoryChange() {
+      const params = new URLSearchParams(window.location.search);
+      setCategory(params.get("category") || "all");
+      setQuery(params.get("q") || "");
+      setVisibleCount(PRODUCTS_PER_PAGE);
+    }
+
+    window.addEventListener(SHOP_FILTER_EVENT, handleFilterChange);
+    window.addEventListener("popstate", handleHistoryChange);
+    return () => {
+      window.removeEventListener(SHOP_FILTER_EVENT, handleFilterChange);
+      window.removeEventListener("popstate", handleHistoryChange);
+    };
+  }, []);
 
   const counts = useMemo(() => {
     const map = new Map<string, number>();
@@ -167,13 +200,43 @@ export function ShopBrowser({
     return list;
   }, [products, category, query, categories]);
 
+  const filteredCount = filtered.length;
+
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    if (!node) return;
+
+    const media = window.matchMedia(DESKTOP_BREAKPOINT);
+    if (media.matches) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+        setVisibleCount((count) =>
+          count < filteredCount ? count + PRODUCTS_PER_PAGE : count
+        );
+      },
+      { rootMargin: "280px 0px" }
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [filteredCount, visibleCount, category, query]);
+
   function selectCategory(next: string) {
-    const params = new URLSearchParams(searchParams.toString());
-    if (next === "all") params.delete("category");
-    else params.set("category", next);
-    const qs = params.toString();
-    router.replace(qs ? `/shop?${qs}` : "/shop", { scroll: false });
+    setCategory(next);
+    setVisibleCount(PRODUCTS_PER_PAGE);
+    updateShopUrl({ category: next });
+    announceShopFilter({ category: next });
   }
+
+  function updateQuery(next: string) {
+    setQuery(next);
+    setVisibleCount(PRODUCTS_PER_PAGE);
+  }
+
+  const visibleProducts = filtered.slice(0, visibleCount);
+  const hasMoreProducts = visibleCount < filtered.length;
 
   const activeMobileParent = visibleParents.find(
     ({ parent, children }) =>
@@ -248,7 +311,7 @@ export function ShopBrowser({
                   className="input-search"
                   placeholder="Search products..."
                   value={query}
-                  onChange={(e) => setQuery(e.target.value)}
+                  onChange={(e) => updateQuery(e.target.value)}
                   aria-label="Search products"
                 />
               </div>
@@ -267,15 +330,45 @@ export function ShopBrowser({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
-              {filtered.map((product, index) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  priority={index < 4}
-                />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+                {visibleProducts.map((product, index) => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    priority={index < 4}
+                  />
+                ))}
+              </div>
+
+              <div className="flex flex-col items-center gap-2 pt-1">
+                <p className="text-[11px] text-muted">
+                  Showing {visibleProducts.length} of {filtered.length} products
+                </p>
+                {hasMoreProducts ? (
+                  <>
+                    <div
+                      ref={loadMoreRef}
+                      className="h-8 w-full lg:hidden"
+                      aria-hidden
+                    />
+                    <p className="text-[11px] text-muted lg:hidden">
+                      Loading more…
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-ghost hidden min-h-10 px-6 lg:inline-flex"
+                      onClick={() =>
+                        setVisibleCount((count) => count + PRODUCTS_PER_PAGE)
+                      }
+                    >
+                      Load more products
+                      <i className="fa-solid fa-chevron-down" aria-hidden />
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </>
           )}
         </div>
       </div>
