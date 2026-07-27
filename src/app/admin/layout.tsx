@@ -1,8 +1,11 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { getCounts } from "@/lib/store";
 
 async function AdminShell({ children }: { children: React.ReactNode }) {
+  // Admin must always read the live catalog/orders (not a prerendered shell).
+  await connection();
   const counts = await getCounts();
 
   return (

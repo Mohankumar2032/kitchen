@@ -1,7 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useMemo, useState, useTransition, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useTransition,
+  type ReactNode,
+} from "react";
 import { ImageGalleryEditor } from "@/components/admin/ImageGalleryEditor";
 import { isUnoptimizedImage } from "@/lib/images";
 import type { CategoryDef, Product, Settings } from "@/lib/types";
@@ -11,6 +18,7 @@ import {
   commissionAmount,
   effectiveCommission,
   getChildCategories,
+  getLeafCategories,
   getParentCategories,
 } from "@/lib/types";
 import { cn, formatINR, formatINRPrecise } from "@/lib/utils";
@@ -117,6 +125,17 @@ export function ProductTable({
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const router = useRouter();
+
+  // Keep client list in sync when the server re-sends props after refresh.
+  useEffect(() => {
+    setProducts(initialProducts);
+    setCategories(initialCategories);
+    setCounts(initialCounts);
+    setDrafts(
+      Object.fromEntries(initialProducts.map((p) => [p.id, toDraft(p)]))
+    );
+  }, [initialProducts, initialCategories, initialCounts]);
 
   const parentCategories = useMemo(
     () => getParentCategories(categories).filter((c) => c.slug !== "packs"),
@@ -214,44 +233,65 @@ export function ProductTable({
       return;
     }
 
+    const leaves = getLeafCategories(categories);
+    if (!leaves.some((leaf) => leaf.slug === newForm.category)) {
+      setMessage("Pick a subcategory for the product.");
+      return;
+    }
+
     startTransition(async () => {
       setMessage(null);
-      const res = await fetch("/api/products", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: newForm.name.trim(),
-          category: newForm.category,
-          type: newForm.type,
-          description: newForm.description.trim(),
-          images: newForm.images,
-          cost: Number(newForm.cost) || 0,
-          sellPrice: Number(newForm.sellPrice) || 0,
-          platformPrice:
-            Number(newForm.platformPrice) || Number(newForm.cost) || 0,
-          stock: Math.max(0, Math.floor(Number(newForm.stock) || 0)),
-          platformName: newForm.platformName.trim() || "Meesho",
-          platformUrl: newForm.platformUrl.trim(),
-        }),
-      });
-      const data = (await res.json()) as { product?: Product; error?: string };
-      if (!res.ok || !data.product) {
-        setMessage(data.error || "Could not add product.");
-        return;
+      try {
+        const res = await fetch("/api/products", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: newForm.name.trim(),
+            category: newForm.category,
+            type: newForm.type,
+            status: "active",
+            description: newForm.description.trim(),
+            images: newForm.images,
+            cost: Number(newForm.cost) || 0,
+            sellPrice: Number(newForm.sellPrice) || 0,
+            platformPrice:
+              Number(newForm.platformPrice) || Number(newForm.cost) || 0,
+            stock: Math.max(0, Math.floor(Number(newForm.stock) || 0)),
+            platformName: newForm.platformName.trim() || "Meesho",
+            platformUrl: newForm.platformUrl.trim(),
+          }),
+        });
+        const data = (await res.json()) as {
+          product?: Product;
+          error?: string;
+        };
+        if (!res.ok || !data.product) {
+          setMessage(data.error || "Could not add product.");
+          return;
+        }
+
+        const created = data.product;
+        setQuery("");
+        setFilter("all");
+        setProducts((prev) => {
+          const withoutDup = prev.filter((p) => p.id !== created.id);
+          const next = [created, ...withoutDup];
+          refreshCounts(next);
+          return next;
+        });
+        setDrafts((prev) => ({
+          ...prev,
+          [created.id]: toDraft(created),
+        }));
+        setNewForm(EMPTY_NEW);
+        setShowAdd(false);
+        setIsAddingCategory(false);
+        setEditingId(null);
+        setMessage("Product added.");
+        router.refresh();
+      } catch {
+        setMessage("Could not add product. Check your connection.");
       }
-      setProducts((prev) => {
-        const next = [data.product!, ...prev];
-        refreshCounts(next);
-        return next;
-      });
-      setDrafts((prev) => ({
-        ...prev,
-        [data.product!.id]: toDraft(data.product!),
-      }));
-      setNewForm(EMPTY_NEW);
-      setShowAdd(false);
-      setEditingId(null);
-      setMessage("Product added.");
     });
   }
 
@@ -617,7 +657,7 @@ export function ProductTable({
               disabled={pending}
               onClick={createProduct}
             >
-              Create product
+              {pending ? "Creating…" : "Create product"}
             </button>
           </div>
         </section>

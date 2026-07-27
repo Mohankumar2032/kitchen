@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
+  serverExternalPackages: ["sharp"],
   turbopack: {
     root: path.join(__dirname),
   },

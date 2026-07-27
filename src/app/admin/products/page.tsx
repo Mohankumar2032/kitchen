@@ -1,3 +1,4 @@
+import { connection } from "next/server";
 import { ProductTable } from "@/components/admin/ProductTable";
 import {
   getCounts,
@@ -6,8 +7,8 @@ import {
   listProducts,
 } from "@/lib/store";
 
-
 export default async function AdminProductsPage() {
+  await connection();
   const [products, settings, counts, categories] = await Promise.all([
     listProducts(),
     getSettings(),

@@ -6,8 +6,8 @@ import { NextResponse } from "next/server";
 import {
   buildImageVariantBuffers,
   composeVariants,
+  toTransferableBuffer,
 } from "@/lib/image-variants";
-
 
 const MAX_BYTES = 8 * 1024 * 1024;
 const ALLOWED_TYPES = new Set([
@@ -46,8 +46,11 @@ async function storeBuffer(
   buffer: Buffer,
   contentType: string
 ): Promise<string> {
+  // Copy so Blob/undici never sees a SharedArrayBuffer-backed view.
+  const payload = toTransferableBuffer(buffer);
+
   if (canUseBlob()) {
-    const blob = await put(pathname, buffer, {
+    const blob = await put(pathname, payload, {
       access: "public",
       addRandomSuffix: false,
       contentType,
@@ -61,7 +64,7 @@ async function storeBuffer(
   const uploadsDir = path.join(process.cwd(), "public", "uploads");
   await fs.mkdir(uploadsDir, { recursive: true });
   const localName = path.basename(pathname);
-  await fs.writeFile(path.join(uploadsDir, localName), buffer);
+  await fs.writeFile(path.join(uploadsDir, localName), payload);
   return `/uploads/${localName}`;
 }
 
@@ -99,7 +102,9 @@ export async function POST(req: Request) {
     if (file.type === "image/svg+xml") {
       const ext = safeExt(file);
       const pathname = `products/${stamp}-${id}.${ext}`;
-      const buffer = Buffer.from(await file.arrayBuffer());
+      const buffer = toTransferableBuffer(
+        new Uint8Array(await file.arrayBuffer())
+      );
 
       if (!canUseBlob() && onVercel) {
         return NextResponse.json(
@@ -134,7 +139,9 @@ export async function POST(req: Request) {
       );
     }
 
-    const input = Buffer.from(await file.arrayBuffer());
+    const input = toTransferableBuffer(
+      new Uint8Array(await file.arrayBuffer())
+    );
     const buffers = await buildImageVariantBuffers(input);
     const base = `products/${stamp}-${id}`;
 

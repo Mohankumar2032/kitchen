@@ -13,8 +13,24 @@ const VARIANT_SPECS = [
   { key: "gallery" as const, width: 1400 },
 ];
 
+/**
+ * Sharp/native Buffers may be SharedArrayBuffer-backed; undici and
+ * @vercel/blob reject those. Copy into a plain ArrayBuffer-backed Buffer.
+ */
+export function toTransferableBuffer(data: Uint8Array | Buffer): Buffer {
+  return Buffer.from(new Uint8Array(data));
+}
+
 function tinyBlurDataUrl(buffer: Buffer): string {
   return `data:image/webp;base64,${buffer.toString("base64")}`;
+}
+
+async function toWebpBuffer(
+  pipeline: sharp.Sharp,
+  quality: number
+): Promise<Buffer> {
+  const { data } = await pipeline.webp({ quality }).toUint8Array();
+  return toTransferableBuffer(data);
 }
 
 /**
@@ -30,39 +46,40 @@ export async function buildImageVariantBuffers(
   original: Buffer;
   blurDataURL: string;
 }> {
-  const image = sharp(input, { failOn: "none" }).rotate();
+  const image = sharp(toTransferableBuffer(input), { failOn: "none" }).rotate();
   const meta = await image.metadata();
 
-  const original = await image
-    .clone()
-    .resize({
+  const original = await toWebpBuffer(
+    image.clone().resize({
       width: Math.min(meta.width || 2000, 2000),
       withoutEnlargement: true,
-    })
-    .webp({ quality: 82 })
-    .toBuffer();
+    }),
+    82
+  );
 
   const [thumb, card, gallery, blur] = await Promise.all([
-    image
-      .clone()
-      .resize({ width: VARIANT_SPECS[0].width, withoutEnlargement: true })
-      .webp({ quality: 72 })
-      .toBuffer(),
-    image
-      .clone()
-      .resize({ width: VARIANT_SPECS[1].width, withoutEnlargement: true })
-      .webp({ quality: 78 })
-      .toBuffer(),
-    image
-      .clone()
-      .resize({ width: VARIANT_SPECS[2].width, withoutEnlargement: true })
-      .webp({ quality: 80 })
-      .toBuffer(),
-    image
-      .clone()
-      .resize({ width: 16, withoutEnlargement: true })
-      .webp({ quality: 40 })
-      .toBuffer(),
+    toWebpBuffer(
+      image
+        .clone()
+        .resize({ width: VARIANT_SPECS[0].width, withoutEnlargement: true }),
+      72
+    ),
+    toWebpBuffer(
+      image
+        .clone()
+        .resize({ width: VARIANT_SPECS[1].width, withoutEnlargement: true }),
+      78
+    ),
+    toWebpBuffer(
+      image
+        .clone()
+        .resize({ width: VARIANT_SPECS[2].width, withoutEnlargement: true }),
+      80
+    ),
+    toWebpBuffer(
+      image.clone().resize({ width: 16, withoutEnlargement: true }),
+      40
+    ),
   ]);
 
   return {

@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { head, put } from "@vercel/blob";
-import { revalidateTag } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import type {
   CategoryDef,
   CheckoutPayload,
@@ -50,8 +50,29 @@ interface OrdersStore {
 
 type EnquiryLike = Database["enquiries"][number];
 
-let cachedDb: Database | null = null;
-let pendingDbRead: Promise<Database> | null = null;
+interface KitchenDbGlobal {
+  __kitchenCachedDb?: Database | null;
+  __kitchenPendingDbRead?: Promise<Database> | null;
+  __kitchenCatalogMtimeMs?: number;
+}
+
+const dbGlobal = globalThis as typeof globalThis & KitchenDbGlobal;
+
+function getCachedDb(): Database | null {
+  return dbGlobal.__kitchenCachedDb ?? null;
+}
+
+function setCachedDb(db: Database | null): void {
+  dbGlobal.__kitchenCachedDb = db;
+}
+
+function getPendingDbRead(): Promise<Database> | null {
+  return dbGlobal.__kitchenPendingDbRead ?? null;
+}
+
+function setPendingDbRead(pending: Promise<Database> | null): void {
+  dbGlobal.__kitchenPendingDbRead = pending;
+}
 
 function shouldUseBlobDb(): boolean {
   return Boolean(
@@ -291,28 +312,57 @@ async function loadDb(): Promise<Database> {
   return db;
 }
 
-export async function readDb(): Promise<Database> {
-  if (cachedDb) return cloneDb(cachedDb);
+async function catalogFileMtimeMs(): Promise<number> {
+  try {
+    const stat = await fs.stat(CATALOG_PATH);
+    return stat.mtimeMs;
+  } catch {
+    return 0;
+  }
+}
 
-  if (!pendingDbRead) {
-    pendingDbRead = loadDb()
-      .then((db) => {
-        cachedDb = cloneDb(db);
+export async function readDb(): Promise<Database> {
+  // Local disk: detect writes from other module instances / processes.
+  if (!shouldUseBlobDb()) {
+    const mtime = await catalogFileMtimeMs();
+    const cached = getCachedDb();
+    if (cached && dbGlobal.__kitchenCatalogMtimeMs === mtime) {
+      return cloneDb(cached);
+    }
+    setCachedDb(null);
+  } else {
+    const cached = getCachedDb();
+    if (cached) return cloneDb(cached);
+  }
+
+  const existingPending = getPendingDbRead();
+  if (!existingPending) {
+    const pending = loadDb()
+      .then(async (db) => {
+        setCachedDb(cloneDb(db));
+        if (!shouldUseBlobDb()) {
+          dbGlobal.__kitchenCatalogMtimeMs = await catalogFileMtimeMs();
+        }
         return db;
       })
       .finally(() => {
-        pendingDbRead = null;
+        setPendingDbRead(null);
       });
+    setPendingDbRead(pending);
   }
 
-  return cloneDb(await pendingDbRead);
+  return cloneDb(await getPendingDbRead()!);
 }
 
 function invalidateCatalogCache(): void {
   try {
+    // Storefront "use cache" entries
     revalidateTag("catalog", "max");
+    // Admin pages under cacheComponents
+    revalidatePath("/admin", "layout");
+    revalidatePath("/admin/products");
   } catch {
-    // revalidateTag is a no-op outside a Next.js request context
+    // Cache APIs are a no-op outside a Next.js request context
   }
 }
 
@@ -345,7 +395,10 @@ async function persistSplit(
     await Promise.all(writes);
   }
 
-  cachedDb = cloneDb(next);
+  setCachedDb(cloneDb(next));
+  if (!shouldUseBlobDb()) {
+    dbGlobal.__kitchenCatalogMtimeMs = await catalogFileMtimeMs();
+  }
 
   if (catalogChanged) invalidateCatalogCache();
 }
@@ -549,6 +602,7 @@ export async function createProduct(
   }
   if (!category) throw new Error("Category is required");
 
+  setCachedDb(null);
   const db = await readDb();
   const leaves = getLeafCategories(db.categories);
   const parents = getParentCategories(db.categories);
@@ -601,7 +655,7 @@ export async function updateProduct(
   patch: ProductUpdate
 ): Promise<Product | null> {
   for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
-    cachedDb = null;
+    setCachedDb(null);
     const db = await readDb();
     const expectedVersion = db.version ?? 1;
     const index = db.products.findIndex((p) => p.id === id);
@@ -638,7 +692,7 @@ export async function getOrderById(id: string): Promise<Order | null> {
 
 export async function createOrder(payload: CheckoutPayload): Promise<Order> {
   for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
-    cachedDb = null;
+    setCachedDb(null);
     const db = await readDb();
     const expectedCatalogVersion = db.version ?? 1;
     const expectedOrdersVersion = db.ordersVersion ?? 1;
