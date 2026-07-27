@@ -306,20 +306,19 @@ async function loadCatalogAndOrders(): Promise<{
   orders: OrdersStore;
 }> {
   if (shouldUseBlobDb()) {
-    const [catalogRead, ordersRead, legacyRead] = await Promise.all([
+    const [catalogRead, ordersRead] = await Promise.all([
       readBlobJson<CatalogStore>(BLOB_CATALOG_PATH),
       readBlobJson<OrdersStore>(BLOB_ORDERS_PATH),
-      readBlobJson<Database>(BLOB_LEGACY_PATH),
     ]);
 
     dbGlobal.__kitchenCatalogEtag = catalogRead?.etag ?? null;
     dbGlobal.__kitchenOrdersEtag = ordersRead?.etag ?? null;
 
     if (catalogRead && ordersRead) {
-      const catalog = await mergeProductBlobs(catalogRead.value);
-      return { catalog, orders: ordersRead.value };
+      return { catalog: catalogRead.value, orders: ordersRead.value };
     }
 
+    const legacyRead = await readBlobJson<Database>(BLOB_LEGACY_PATH);
     if (legacyRead) {
       const migrated = await migrateFromLegacy(normalizeDb(legacyRead.value));
       const [catalogEtag, ordersEtag] = await Promise.all([
@@ -335,8 +334,7 @@ async function loadCatalogAndOrders(): Promise<{
       const nextOrders = emptyOrders();
       const ordersEtag = await writeBlobJson(BLOB_ORDERS_PATH, nextOrders);
       dbGlobal.__kitchenOrdersEtag = ordersEtag;
-      const catalog = await mergeProductBlobs(catalogRead.value);
-      return { catalog, orders: nextOrders };
+      return { catalog: catalogRead.value, orders: nextOrders };
     }
 
     const seed = normalizeDb(await readSeedLegacy());
@@ -837,7 +835,8 @@ export async function createProduct(
 
     // 2) Refresh catalog index (best-effort merge so concurrent creates survive).
     const latest = await readDbFresh();
-    const byId = new Map(latest.products.map((p) => [p.id, p]));
+    const recoveredCatalog = await mergeProductBlobs(splitDb(latest).catalog);
+    const byId = new Map(recoveredCatalog.products.map((p) => [p.id, p]));
     byId.set(product.id, product);
     latest.products = Array.from(byId.values()).sort(
       (a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)
