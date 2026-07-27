@@ -128,13 +128,29 @@ export function ProductTable({
   const router = useRouter();
 
   // Keep client list in sync when the server re-sends props after refresh.
+  // Merge by id so a briefly-stale refresh cannot wipe a product just added
+  // optimistically (common on Vercel while Blob/CDN catches up).
   useEffect(() => {
-    setProducts(initialProducts);
+    setProducts((prev) => {
+      const byId = new Map(initialProducts.map((p) => [p.id, p]));
+      for (const p of prev) {
+        if (!byId.has(p.id)) byId.set(p.id, p);
+      }
+      return Array.from(byId.values());
+    });
     setCategories(initialCategories);
-    setCounts(initialCounts);
-    setDrafts(
-      Object.fromEntries(initialProducts.map((p) => [p.id, toDraft(p)]))
+    setCounts((prev) =>
+      initialCounts.products >= prev.products ? initialCounts : prev
     );
+    setDrafts((prev) => {
+      const next = Object.fromEntries(
+        initialProducts.map((p) => [p.id, toDraft(p)])
+      );
+      for (const [id, draft] of Object.entries(prev)) {
+        if (!(id in next)) next[id] = draft;
+      }
+      return next;
+    });
   }, [initialProducts, initialCategories, initialCounts]);
 
   const parentCategories = useMemo(

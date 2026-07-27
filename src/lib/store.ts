@@ -148,7 +148,11 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
 async function readBlobJson<T>(blobPath: string): Promise<T | null> {
   try {
     const meta = await head(blobPath, blobOpts());
-    const res = await fetch(meta.url, { cache: "no-store" });
+    // Bust CDN cache so catalog writes are visible across lambdas immediately.
+    const sep = meta.url.includes("?") ? "&" : "?";
+    const res = await fetch(`${meta.url}${sep}t=${Date.now()}`, {
+      cache: "no-store",
+    });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -162,7 +166,7 @@ async function writeBlobJson(blobPath: string, value: unknown): Promise<void> {
     contentType: "application/json",
     addRandomSuffix: false,
     allowOverwrite: true,
-    cacheControlMaxAge: 60,
+    cacheControlMaxAge: 0,
     ...blobOpts(),
   });
 }
@@ -330,8 +334,9 @@ export async function readDb(): Promise<Database> {
     }
     setCachedDb(null);
   } else {
-    const cached = getCachedDb();
-    if (cached) return cloneDb(cached);
+    // Blob is shared across lambdas; never reuse process memory here —
+    // another instance may have written a newer catalog.json.
+    setCachedDb(null);
   }
 
   const existingPending = getPendingDbRead();
