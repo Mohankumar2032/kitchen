@@ -32,7 +32,7 @@ const BLOB_LEGACY_PATH = "kitchen/db.json";
 const BLOB_CATALOG_PATH = "kitchen/catalog.json";
 const BLOB_ORDERS_PATH = "kitchen/orders.json";
 
-const MAX_WRITE_RETRIES = 3;
+const MAX_WRITE_RETRIES = 5;
 
 interface CatalogStore {
   version: number;
@@ -52,7 +52,9 @@ type EnquiryLike = Database["enquiries"][number];
 interface KitchenDbGlobal {
   __kitchenCachedDb?: Database | null;
   __kitchenPendingDbRead?: Promise<Database> | null;
+  __kitchenPendingDbReadId?: number;
   __kitchenCatalogMtimeMs?: number;
+  __kitchenCatalogWriteChain?: Promise<void>;
 }
 
 const dbGlobal = globalThis as typeof globalThis & KitchenDbGlobal;
@@ -71,6 +73,29 @@ function getPendingDbRead(): Promise<Database> | null {
 
 function setPendingDbRead(pending: Promise<Database> | null): void {
   dbGlobal.__kitchenPendingDbRead = pending;
+}
+
+function nextPendingReadId(): number {
+  const id = (dbGlobal.__kitchenPendingDbReadId ?? 0) + 1;
+  dbGlobal.__kitchenPendingDbReadId = id;
+  return id;
+}
+
+/** Serialize catalog mutations in this process so local writes cannot clobber each other. */
+function withCatalogLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = dbGlobal.__kitchenCatalogWriteChain ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  dbGlobal.__kitchenCatalogWriteChain = prev.then(() => gate, () => gate);
+
+  return prev
+    .catch(() => undefined)
+    .then(fn)
+    .finally(() => {
+      release();
+    });
 }
 
 function shouldUseBlobDb(): boolean {
@@ -324,6 +349,34 @@ async function catalogFileMtimeMs(): Promise<number> {
   }
 }
 
+async function startFreshDbLoad(): Promise<Database> {
+  // Drop any in-flight load so callers never join a stale pre-write snapshot.
+  setCachedDb(null);
+  const readId = nextPendingReadId();
+  const pending = loadDb()
+    .then(async (db) => {
+      // Ignore results from superseded loads.
+      if (dbGlobal.__kitchenPendingDbReadId !== readId) return db;
+      setCachedDb(cloneDb(db));
+      if (!shouldUseBlobDb()) {
+        dbGlobal.__kitchenCatalogMtimeMs = await catalogFileMtimeMs();
+      }
+      return db;
+    })
+    .finally(() => {
+      if (dbGlobal.__kitchenPendingDbReadId === readId) {
+        setPendingDbRead(null);
+      }
+    });
+  setPendingDbRead(pending);
+  return cloneDb(await pending);
+}
+
+/** Always read latest catalog/orders from disk or Blob (bypass memory cache). */
+async function readDbFresh(): Promise<Database> {
+  return startFreshDbLoad();
+}
+
 export async function readDb(): Promise<Database> {
   // Local disk: detect writes from other module instances / processes.
   if (!shouldUseBlobDb()) {
@@ -332,30 +385,15 @@ export async function readDb(): Promise<Database> {
     if (cached && dbGlobal.__kitchenCatalogMtimeMs === mtime) {
       return cloneDb(cached);
     }
-    setCachedDb(null);
   } else {
     // Blob is shared across lambdas; never reuse process memory here —
     // another instance may have written a newer catalog.json.
-    setCachedDb(null);
   }
 
   const existingPending = getPendingDbRead();
-  if (!existingPending) {
-    const pending = loadDb()
-      .then(async (db) => {
-        setCachedDb(cloneDb(db));
-        if (!shouldUseBlobDb()) {
-          dbGlobal.__kitchenCatalogMtimeMs = await catalogFileMtimeMs();
-        }
-        return db;
-      })
-      .finally(() => {
-        setPendingDbRead(null);
-      });
-    setPendingDbRead(pending);
-  }
+  if (existingPending) return cloneDb(await existingPending);
 
-  return cloneDb(await getPendingDbRead()!);
+  return startFreshDbLoad();
 }
 
 function invalidateCatalogCache(): void {
@@ -403,6 +441,9 @@ async function persistSplit(
   if (!shouldUseBlobDb()) {
     dbGlobal.__kitchenCatalogMtimeMs = await catalogFileMtimeMs();
   }
+  // Invalidate any in-flight read so it cannot replace this fresher snapshot.
+  nextPendingReadId();
+  setPendingDbRead(null);
 
   if (catalogChanged) invalidateCatalogCache();
 }
@@ -480,45 +521,58 @@ export async function ensureCategory(
   label?: string,
   parent?: string | null
 ): Promise<CategoryDef> {
-  const db = await readDb();
-  const rawLabel = (label || labelOrSlug).trim();
-  if (!rawLabel) throw new Error("Category name is required");
+  return withCatalogLock(async () => {
+    for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
+      const db = await readDbFresh();
+      const expectedVersion = db.version ?? 1;
+      const rawLabel = (label || labelOrSlug).trim();
+      if (!rawLabel) throw new Error("Category name is required");
 
-  let slug = slugifyCategory(label ? labelOrSlug : rawLabel);
-  if (!slug) slug = `category-${Date.now().toString(36)}`;
-  slug = resolveCategorySlug(slug);
+      let slug = slugifyCategory(label ? labelOrSlug : rawLabel);
+      if (!slug) slug = `category-${Date.now().toString(36)}`;
+      slug = resolveCategorySlug(slug);
 
-  const parentSlug = parent ? resolveCategorySlug(parent) : null;
-  if (parentSlug) {
-    const parents = allCategoryDefs(db.categories);
-    const parentExists = parents.some((c) => c.slug === parentSlug && !c.parent);
-    if (!parentExists) throw new Error("Invalid parent category");
-  }
+      const parentSlug = parent ? resolveCategorySlug(parent) : null;
+      if (parentSlug) {
+        const parents = allCategoryDefs(db.categories);
+        const parentExists = parents.some(
+          (c) => c.slug === parentSlug && !c.parent
+        );
+        if (!parentExists) throw new Error("Invalid parent category");
+      }
 
-  const existing =
-    (db.categories ?? []).find((c) => c.slug === slug) ||
-    (CATEGORY_META[slug]
-      ? {
-          slug,
-          label: CATEGORY_META[slug].label,
-          icon: CATEGORY_META[slug].icon,
-          blurb: CATEGORY_META[slug].blurb,
-          parent: CATEGORY_META[slug].parent ?? null,
-        }
-      : null);
+      const existing =
+        (db.categories ?? []).find((c) => c.slug === slug) ||
+        (CATEGORY_META[slug]
+          ? {
+              slug,
+              label: CATEGORY_META[slug].label,
+              icon: CATEGORY_META[slug].icon,
+              blurb: CATEGORY_META[slug].blurb,
+              parent: CATEGORY_META[slug].parent ?? null,
+            }
+          : null);
 
-  if (existing) return existing;
+      if (existing) return existing;
 
-  const created: CategoryDef = {
-    slug,
-    label: rawLabel,
-    icon: "fa-tag",
-    blurb: "Browse products",
-    parent: parentSlug,
-  };
-  db.categories = [...(db.categories ?? []), created];
-  await writeCatalogDb(db);
-  return created;
+      const created: CategoryDef = {
+        slug,
+        label: rawLabel,
+        icon: "fa-tag",
+        blurb: "Browse products",
+        parent: parentSlug,
+      };
+      db.categories = [...(db.categories ?? []), created];
+
+      const latest = await loadDb();
+      if ((latest.version ?? 1) !== expectedVersion) continue;
+
+      await writeCatalogDb(db);
+      return created;
+    }
+
+    throw new Error("Could not create category due to concurrent updates");
+  });
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -529,10 +583,21 @@ export async function getSettings(): Promise<Settings> {
 export async function updateSettings(
   patch: Partial<Settings>
 ): Promise<Settings> {
-  const db = await readDb();
-  db.settings = { ...db.settings, ...patch };
-  await writeCatalogDb(db);
-  return db.settings;
+  return withCatalogLock(async () => {
+    for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
+      const db = await readDbFresh();
+      const expectedVersion = db.version ?? 1;
+      db.settings = { ...db.settings, ...patch };
+
+      const latest = await loadDb();
+      if ((latest.version ?? 1) !== expectedVersion) continue;
+
+      await writeCatalogDb(db);
+      return db.settings;
+    }
+
+    throw new Error("Could not update settings due to concurrent updates");
+  });
 }
 
 export async function listProducts(): Promise<Product[]> {
@@ -589,92 +654,145 @@ export async function createProduct(
   const name = input.name.trim();
   if (!name) throw new Error("Name is required");
 
-  let category = resolveCategorySlug(input.category.trim());
-  if (input.categoryLabel?.trim()) {
-    const ensured = await ensureCategory(
-      category || input.categoryLabel,
-      input.categoryLabel.trim()
-    );
-    category = ensured.slug;
-  } else if (category && !CATEGORY_META[category]) {
-    await ensureCategory(category, categoryLabel(category));
-  }
-  if (!category) throw new Error("Category is required");
+  return withCatalogLock(async () => {
+    for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
+      const db = await readDbFresh();
+      const expectedVersion = db.version ?? 1;
 
-  setCachedDb(null);
-  const db = await readDb();
-  const leaves = getLeafCategories(db.categories);
-  const parents = getParentCategories(db.categories);
-  const isLeaf = leaves.some((c) => c.slug === category);
-  const isParentOnly = parents.some(
-    (c) =>
-      c.slug === category && getChildCategories(c.slug, db.categories).length > 0
-  );
-  if (!isLeaf || isParentOnly) {
-    throw new Error("Pick a subcategory (not a parent category)");
-  }
+      let category = resolveCategorySlug(input.category.trim());
+      if (input.categoryLabel?.trim()) {
+        const rawLabel = input.categoryLabel.trim();
+        let slug = resolveCategorySlug(category || rawLabel);
+        if (!slug) slug = `category-${Date.now().toString(36)}`;
+        const existing =
+          (db.categories ?? []).find((c) => c.slug === slug) ||
+          (CATEGORY_META[slug]
+            ? {
+                slug,
+                label: CATEGORY_META[slug].label,
+                icon: CATEGORY_META[slug].icon,
+                blurb: CATEGORY_META[slug].blurb,
+                parent: CATEGORY_META[slug].parent ?? null,
+              }
+            : null);
+        if (existing) {
+          category = existing.slug;
+        } else {
+          const created: CategoryDef = {
+            slug,
+            label: rawLabel,
+            icon: "fa-tag",
+            blurb: "Browse products",
+            parent: null,
+          };
+          db.categories = [...(db.categories ?? []), created];
+          category = created.slug;
+        }
+      } else if (category && !CATEGORY_META[category]) {
+        const existing = (db.categories ?? []).find((c) => c.slug === category);
+        if (!existing) {
+          db.categories = [
+            ...(db.categories ?? []),
+            {
+              slug: category,
+              label: categoryLabel(category),
+              icon: "fa-tag",
+              blurb: "Browse products",
+              parent: null,
+            },
+          ];
+        }
+      }
+      if (!category) throw new Error("Category is required");
 
-  let slug = slugify(name) || `product-${Date.now()}`;
-  const slugTaken = db.products.some((p) => p.slug === slug);
-  if (slugTaken) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+      const leaves = getLeafCategories(db.categories);
+      const parents = getParentCategories(db.categories);
+      const isLeaf = leaves.some((c) => c.slug === category);
+      const isParentOnly = parents.some(
+        (c) =>
+          c.slug === category &&
+          getChildCategories(c.slug, db.categories).length > 0
+      );
+      if (!isLeaf || isParentOnly) {
+        throw new Error("Pick a subcategory (not a parent category)");
+      }
 
-  const now = new Date().toISOString();
-  const product: Product = {
-    id: `p-${Math.random().toString(36).slice(2, 8)}`,
-    name,
-    slug,
-    category,
-    type: input.type === "pack" ? "pack" : "product",
-    status: input.status === "inactive" ? "inactive" : "active",
-    description: (input.description || "").trim(),
-    images: input.images?.length ? input.images : ["/products/appliance.svg"],
-    imageVariants: input.imageVariants,
-    cost: Number(input.cost) || 0,
-    sellPrice: Number(input.sellPrice) || 0,
-    mrp: input.mrp != null && input.mrp > 0 ? Number(input.mrp) : undefined,
-    platformPrice: Number(input.platformPrice) || 0,
-    platformName: (input.platformName || "Meesho").trim() || "Meesho",
-    platformUrl: (input.platformUrl || "").trim(),
-    stock: Math.max(0, Math.floor(Number(input.stock) || 0)),
-    commissionPercent:
-      input.commissionPercent === undefined || input.commissionPercent === null
-        ? null
-        : Math.min(100, Math.max(0, Number(input.commissionPercent) || 0)),
-    createdAt: now,
-    updatedAt: now,
-  };
+      let slug = slugify(name) || `product-${Date.now()}`;
+      const slugTaken = db.products.some((p) => p.slug === slug);
+      if (slugTaken) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
 
-  db.products.unshift(product);
-  await writeCatalogDb(db);
-  return product;
+      const now = new Date().toISOString();
+      const product: Product = {
+        id: `p-${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        slug,
+        category,
+        type: input.type === "pack" ? "pack" : "product",
+        status: input.status === "inactive" ? "inactive" : "active",
+        description: (input.description || "").trim(),
+        images: input.images?.length
+          ? input.images
+          : ["/products/appliance.svg"],
+        imageVariants: input.imageVariants,
+        cost: Number(input.cost) || 0,
+        sellPrice: Number(input.sellPrice) || 0,
+        mrp: input.mrp != null && input.mrp > 0 ? Number(input.mrp) : undefined,
+        platformPrice: Number(input.platformPrice) || 0,
+        platformName: (input.platformName || "Meesho").trim() || "Meesho",
+        platformUrl: (input.platformUrl || "").trim(),
+        stock: Math.max(0, Math.floor(Number(input.stock) || 0)),
+        commissionPercent:
+          input.commissionPercent === undefined ||
+          input.commissionPercent === null
+            ? null
+            : Math.min(
+                100,
+                Math.max(0, Number(input.commissionPercent) || 0)
+              ),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      db.products.unshift(product);
+
+      const latest = await loadDb();
+      if ((latest.version ?? 1) !== expectedVersion) continue;
+
+      await writeCatalogDb(db);
+      return product;
+    }
+
+    throw new Error("Could not create product due to concurrent updates");
+  });
 }
 
 export async function updateProduct(
   id: string,
   patch: ProductUpdate
 ): Promise<Product | null> {
-  for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
-    setCachedDb(null);
-    const db = await readDb();
-    const expectedVersion = db.version ?? 1;
-    const index = db.products.findIndex((p) => p.id === id);
-    if (index === -1) return null;
+  return withCatalogLock(async () => {
+    for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
+      const db = await readDbFresh();
+      const expectedVersion = db.version ?? 1;
+      const index = db.products.findIndex((p) => p.id === id);
+      if (index === -1) return null;
 
-    const next: Product = {
-      ...db.products[index],
-      ...patch,
-      updatedAt: new Date().toISOString(),
-    };
-    db.products[index] = next;
+      const next: Product = {
+        ...db.products[index],
+        ...patch,
+        updatedAt: new Date().toISOString(),
+      };
+      db.products[index] = next;
 
-    const latest = await loadDb();
-    if ((latest.version ?? 1) !== expectedVersion) continue;
+      const latest = await loadDb();
+      if ((latest.version ?? 1) !== expectedVersion) continue;
 
-    await writeCatalogDb(db);
-    return next;
-  }
+      await writeCatalogDb(db);
+      return next;
+    }
 
-  throw new Error("Could not save product due to concurrent updates");
+    throw new Error("Could not save product due to concurrent updates");
+  });
 }
 
 export async function listOrders(): Promise<Order[]> {

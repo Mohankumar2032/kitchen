@@ -12,7 +12,14 @@ import { getLeafCategories } from "@/lib/types";
 
 export async function GET() {
   const [products, counts] = await Promise.all([listProducts(), getCounts()]);
-  return NextResponse.json({ products, counts });
+  return NextResponse.json(
+    { products, counts },
+    {
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    }
+  );
 }
 
 export async function POST(req: Request) {

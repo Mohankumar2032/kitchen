@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   useTransition,
   type ReactNode,
@@ -125,6 +126,7 @@ export function ProductTable({
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const creatingRef = useRef(false);
   const router = useRouter();
 
   // Keep client list in sync when the server re-sends props after refresh.
@@ -244,6 +246,8 @@ export function ProductTable({
   }
 
   function createProduct() {
+    if (creatingRef.current || pending) return;
+
     if (!newForm.name.trim()) {
       setMessage("Enter a product name.");
       return;
@@ -255,6 +259,7 @@ export function ProductTable({
       return;
     }
 
+    creatingRef.current = true;
     startTransition(async () => {
       setMessage(null);
       try {
@@ -277,24 +282,50 @@ export function ProductTable({
             platformUrl: newForm.platformUrl.trim(),
           }),
         });
-        const data = (await res.json()) as {
+        const data = (await res.json().catch(() => null)) as {
           product?: Product;
           error?: string;
-        };
-        if (!res.ok || !data.product) {
-          setMessage(data.error || "Could not add product.");
+        } | null;
+        if (!res.ok || !data?.product) {
+          setMessage(data?.error || "Could not add product. Try again.");
           return;
         }
 
         const created = data.product;
+
+        // Prefer server list so we never show a create that failed to persist.
+        let synced = false;
+        try {
+          const listRes = await fetch("/api/products", { cache: "no-store" });
+          if (listRes.ok) {
+            const listData = (await listRes.json()) as {
+              products?: Product[];
+              counts?: Counts;
+            };
+            if (Array.isArray(listData.products)) {
+              const byId = new Map(listData.products.map((p) => [p.id, p]));
+              byId.set(created.id, created);
+              const merged = Array.from(byId.values());
+              setProducts(merged);
+              if (listData.counts) setCounts(listData.counts);
+              else refreshCounts(merged);
+              synced = true;
+            }
+          }
+        } catch {
+          // Fall back to optimistic merge below.
+        }
+
+        if (!synced) {
+          setProducts((prev) => {
+            const next = [created, ...prev.filter((p) => p.id !== created.id)];
+            refreshCounts(next);
+            return next;
+          });
+        }
+
         setQuery("");
         setFilter("all");
-        setProducts((prev) => {
-          const withoutDup = prev.filter((p) => p.id !== created.id);
-          const next = [created, ...withoutDup];
-          refreshCounts(next);
-          return next;
-        });
         setDrafts((prev) => ({
           ...prev,
           [created.id]: toDraft(created),
@@ -307,6 +338,8 @@ export function ProductTable({
         router.refresh();
       } catch {
         setMessage("Could not add product. Check your connection.");
+      } finally {
+        creatingRef.current = false;
       }
     });
   }
