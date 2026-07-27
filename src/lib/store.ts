@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { head, put } from "@vercel/blob";
+import { get, list, put } from "@vercel/blob";
 import { revalidatePath, revalidateTag } from "next/cache";
 import type {
   CategoryDef,
@@ -31,8 +31,9 @@ const ORDERS_PATH = path.join(DATA_DIR, "orders.json");
 const BLOB_LEGACY_PATH = "kitchen/db.json";
 const BLOB_CATALOG_PATH = "kitchen/catalog.json";
 const BLOB_ORDERS_PATH = "kitchen/orders.json";
+const BLOB_PRODUCTS_PREFIX = "kitchen/products/";
 
-const MAX_WRITE_RETRIES = 5;
+const MAX_WRITE_RETRIES = 8;
 
 interface CatalogStore {
   version: number;
@@ -49,12 +50,19 @@ interface OrdersStore {
 
 type EnquiryLike = Database["enquiries"][number];
 
+interface BlobJsonRead<T> {
+  value: T;
+  etag: string | null;
+}
+
 interface KitchenDbGlobal {
   __kitchenCachedDb?: Database | null;
   __kitchenPendingDbRead?: Promise<Database> | null;
   __kitchenPendingDbReadId?: number;
   __kitchenCatalogMtimeMs?: number;
   __kitchenCatalogWriteChain?: Promise<void>;
+  __kitchenCatalogEtag?: string | null;
+  __kitchenOrdersEtag?: string | null;
 }
 
 const dbGlobal = globalThis as typeof globalThis & KitchenDbGlobal;
@@ -79,6 +87,12 @@ function nextPendingReadId(): number {
   const id = (dbGlobal.__kitchenPendingDbReadId ?? 0) + 1;
   dbGlobal.__kitchenPendingDbReadId = id;
   return id;
+}
+
+/** Blob get() returns weak ETags (W/"..."); normalize when storing. */
+function toStrongEtag(etag: string | null | undefined): string | null {
+  if (!etag) return null;
+  return etag.replace(/^W\//, "");
 }
 
 /** Serialize catalog mutations in this process so local writes cannot clobber each other. */
@@ -170,23 +184,30 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
   }
 }
 
-async function readBlobJson<T>(blobPath: string): Promise<T | null> {
+/** Read JSON from Blob. Prefer put URL fetch when available — get() can lag after writes. */
+async function readBlobJson<T>(blobPath: string): Promise<BlobJsonRead<T> | null> {
   try {
-    const meta = await head(blobPath, blobOpts());
-    // Bust CDN cache so catalog writes are visible across lambdas immediately.
-    const sep = meta.url.includes("?") ? "&" : "?";
-    const res = await fetch(`${meta.url}${sep}t=${Date.now()}`, {
-      cache: "no-store",
+    const result = await get(blobPath, {
+      access: "public",
+      useCache: false,
+      ...blobOpts(),
     });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
+    if (!result || result.statusCode !== 200 || !result.stream) return null;
+    const text = await new Response(result.stream).text();
+    return {
+      value: JSON.parse(text) as T,
+      etag: toStrongEtag(result.blob.etag),
+    };
   } catch {
     return null;
   }
 }
 
-async function writeBlobJson(blobPath: string, value: unknown): Promise<void> {
-  await put(blobPath, JSON.stringify(value, null, 2), {
+async function writeBlobJson(
+  blobPath: string,
+  value: unknown
+): Promise<string | null> {
+  const result = await put(blobPath, JSON.stringify(value, null, 2), {
     access: "public",
     contentType: "application/json",
     addRandomSuffix: false,
@@ -194,6 +215,73 @@ async function writeBlobJson(blobPath: string, value: unknown): Promise<void> {
     cacheControlMaxAge: 0,
     ...blobOpts(),
   });
+  return toStrongEtag(result.etag);
+}
+
+function productBlobPath(id: string): string {
+  return `${BLOB_PRODUCTS_PREFIX}${id}.json`;
+}
+
+/** Durable per-product document — survives catalog index races on Blob. */
+async function writeProductBlob(product: Product): Promise<void> {
+  if (!shouldUseBlobDb()) return;
+  await writeBlobJson(productBlobPath(product.id), product);
+}
+
+async function readProductBlob(id: string): Promise<Product | null> {
+  if (!shouldUseBlobDb()) return null;
+  const read = await readBlobJson<Product>(productBlobPath(id));
+  return read?.value ?? null;
+}
+
+/**
+ * Merge any product documents under kitchen/products/ into the catalog index.
+ * This recovers products lost when concurrent catalog overwrites race.
+ */
+async function mergeProductBlobs(catalog: CatalogStore): Promise<CatalogStore> {
+  if (!shouldUseBlobDb()) return catalog;
+
+  try {
+    const listed = await list({
+      prefix: BLOB_PRODUCTS_PREFIX,
+      ...blobOpts(),
+    });
+    if (!listed.blobs.length) return catalog;
+
+    const byId = new Map(catalog.products.map((p) => [p.id, p]));
+    let changed = false;
+
+    await Promise.all(
+      listed.blobs.map(async (blob) => {
+        const file = blob.pathname.split("/").pop() || "";
+        if (!file.endsWith(".json")) return;
+        const id = file.slice(0, -".json".length);
+        if (!id || byId.has(id)) return;
+        try {
+          const res = await fetch(`${blob.url}?t=${Date.now()}`, {
+            cache: "no-store",
+          });
+          if (!res.ok) return;
+          const product = (await res.json()) as Product;
+          if (!product?.id || product.id !== id) return;
+          byId.set(id, product);
+          changed = true;
+        } catch {
+          // skip unreadable product blob
+        }
+      })
+    );
+
+    if (!changed) return catalog;
+
+    const products = Array.from(byId.values()).sort(
+      (a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)
+    );
+    return { ...catalog, products };
+  } catch (error) {
+    console.error("mergeProductBlobs failed", error);
+    return catalog;
+  }
 }
 
 async function readSeedLegacy(): Promise<Database> {
@@ -218,35 +306,47 @@ async function loadCatalogAndOrders(): Promise<{
   orders: OrdersStore;
 }> {
   if (shouldUseBlobDb()) {
-    const [catalog, orders, legacy] = await Promise.all([
+    const [catalogRead, ordersRead, legacyRead] = await Promise.all([
       readBlobJson<CatalogStore>(BLOB_CATALOG_PATH),
       readBlobJson<OrdersStore>(BLOB_ORDERS_PATH),
       readBlobJson<Database>(BLOB_LEGACY_PATH),
     ]);
 
-    if (catalog && orders) return { catalog, orders };
+    dbGlobal.__kitchenCatalogEtag = catalogRead?.etag ?? null;
+    dbGlobal.__kitchenOrdersEtag = ordersRead?.etag ?? null;
 
-    if (legacy) {
-      const migrated = await migrateFromLegacy(normalizeDb(legacy));
-      await Promise.all([
+    if (catalogRead && ordersRead) {
+      const catalog = await mergeProductBlobs(catalogRead.value);
+      return { catalog, orders: ordersRead.value };
+    }
+
+    if (legacyRead) {
+      const migrated = await migrateFromLegacy(normalizeDb(legacyRead.value));
+      const [catalogEtag, ordersEtag] = await Promise.all([
         writeBlobJson(BLOB_CATALOG_PATH, migrated.catalog),
         writeBlobJson(BLOB_ORDERS_PATH, migrated.orders),
       ]);
+      dbGlobal.__kitchenCatalogEtag = catalogEtag;
+      dbGlobal.__kitchenOrdersEtag = ordersEtag;
       return migrated;
     }
 
-    if (catalog && !orders) {
+    if (catalogRead && !ordersRead) {
       const nextOrders = emptyOrders();
-      await writeBlobJson(BLOB_ORDERS_PATH, nextOrders);
+      const ordersEtag = await writeBlobJson(BLOB_ORDERS_PATH, nextOrders);
+      dbGlobal.__kitchenOrdersEtag = ordersEtag;
+      const catalog = await mergeProductBlobs(catalogRead.value);
       return { catalog, orders: nextOrders };
     }
 
     const seed = normalizeDb(await readSeedLegacy());
     const migrated = await migrateFromLegacy(seed);
-    await Promise.all([
+    const [catalogEtag, ordersEtag] = await Promise.all([
       writeBlobJson(BLOB_CATALOG_PATH, migrated.catalog),
       writeBlobJson(BLOB_ORDERS_PATH, migrated.orders),
     ]);
+    dbGlobal.__kitchenCatalogEtag = catalogEtag;
+    dbGlobal.__kitchenOrdersEtag = ordersEtag;
     return migrated;
   }
 
@@ -255,6 +355,9 @@ async function loadCatalogAndOrders(): Promise<{
     readJsonFile<OrdersStore>(ORDERS_PATH),
     readJsonFile<Database>(LEGACY_DB_PATH),
   ]);
+
+  dbGlobal.__kitchenCatalogEtag = null;
+  dbGlobal.__kitchenOrdersEtag = null;
 
   if (catalog && orders) return { catalog, orders };
 
@@ -308,36 +411,14 @@ function normalizeDb(db: Database): Database {
   return db;
 }
 
-function catalogNeedsImagePathMigration(db: Database): boolean {
-  return db.products.some((product) =>
-    (product.images || []).some(
-      (url) =>
-        url.startsWith("/products/catalog/") &&
-        (url.endsWith(".png") || url.endsWith(".PNG"))
-    )
-  );
-}
-
 function cloneDb(db: Database): Database {
   return structuredClone(db);
 }
 
 async function loadDb(): Promise<Database> {
   const { catalog, orders } = await loadCatalogAndOrders();
-  const composed = composeDb(catalog, orders);
-  const needsImageMigration = catalogNeedsImagePathMigration(composed);
-  const db = normalizeDb(composed);
-
-  // Persist PNG → WebP path rewrite so Blob/local catalog stops serving dead .png URLs.
-  if (needsImageMigration) {
-    try {
-      await writeCatalogDb(db);
-    } catch (error) {
-      console.error("Catalog image path migration failed", error);
-    }
-  }
-
-  return db;
+  // Normalize in memory only — never write on read (that races with creates on Blob).
+  return normalizeDb(composeDb(catalog, orders));
 }
 
 async function catalogFileMtimeMs(): Promise<number> {
@@ -417,10 +498,24 @@ async function persistSplit(
   const { catalog, orders } = splitDb(next);
 
   if (shouldUseBlobDb()) {
-    const writes: Promise<void>[] = [];
-    if (catalogChanged) writes.push(writeBlobJson(BLOB_CATALOG_PATH, catalog));
-    if (ordersChanged) writes.push(writeBlobJson(BLOB_ORDERS_PATH, orders));
-    await Promise.all(writes);
+    if (catalogChanged && ordersChanged) {
+      const [nextCatalogEtag, nextOrdersEtag] = await Promise.all([
+        writeBlobJson(BLOB_CATALOG_PATH, catalog),
+        writeBlobJson(BLOB_ORDERS_PATH, orders),
+      ]);
+      dbGlobal.__kitchenCatalogEtag = nextCatalogEtag;
+      dbGlobal.__kitchenOrdersEtag = nextOrdersEtag;
+    } else if (catalogChanged) {
+      dbGlobal.__kitchenCatalogEtag = await writeBlobJson(
+        BLOB_CATALOG_PATH,
+        catalog
+      );
+    } else if (ordersChanged) {
+      dbGlobal.__kitchenOrdersEtag = await writeBlobJson(
+        BLOB_ORDERS_PATH,
+        orders
+      );
+    }
   } else {
     await fs.mkdir(DATA_DIR, { recursive: true });
     const writes: Promise<void>[] = [];
@@ -522,56 +617,47 @@ export async function ensureCategory(
   parent?: string | null
 ): Promise<CategoryDef> {
   return withCatalogLock(async () => {
-    for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
-      const db = await readDbFresh();
-      const expectedVersion = db.version ?? 1;
-      const rawLabel = (label || labelOrSlug).trim();
-      if (!rawLabel) throw new Error("Category name is required");
+    const db = await readDbFresh();
+    const rawLabel = (label || labelOrSlug).trim();
+    if (!rawLabel) throw new Error("Category name is required");
 
-      let slug = slugifyCategory(label ? labelOrSlug : rawLabel);
-      if (!slug) slug = `category-${Date.now().toString(36)}`;
-      slug = resolveCategorySlug(slug);
+    let slug = slugifyCategory(label ? labelOrSlug : rawLabel);
+    if (!slug) slug = `category-${Date.now().toString(36)}`;
+    slug = resolveCategorySlug(slug);
 
-      const parentSlug = parent ? resolveCategorySlug(parent) : null;
-      if (parentSlug) {
-        const parents = allCategoryDefs(db.categories);
-        const parentExists = parents.some(
-          (c) => c.slug === parentSlug && !c.parent
-        );
-        if (!parentExists) throw new Error("Invalid parent category");
-      }
-
-      const existing =
-        (db.categories ?? []).find((c) => c.slug === slug) ||
-        (CATEGORY_META[slug]
-          ? {
-              slug,
-              label: CATEGORY_META[slug].label,
-              icon: CATEGORY_META[slug].icon,
-              blurb: CATEGORY_META[slug].blurb,
-              parent: CATEGORY_META[slug].parent ?? null,
-            }
-          : null);
-
-      if (existing) return existing;
-
-      const created: CategoryDef = {
-        slug,
-        label: rawLabel,
-        icon: "fa-tag",
-        blurb: "Browse products",
-        parent: parentSlug,
-      };
-      db.categories = [...(db.categories ?? []), created];
-
-      const latest = await loadDb();
-      if ((latest.version ?? 1) !== expectedVersion) continue;
-
-      await writeCatalogDb(db);
-      return created;
+    const parentSlug = parent ? resolveCategorySlug(parent) : null;
+    if (parentSlug) {
+      const parents = allCategoryDefs(db.categories);
+      const parentExists = parents.some(
+        (c) => c.slug === parentSlug && !c.parent
+      );
+      if (!parentExists) throw new Error("Invalid parent category");
     }
 
-    throw new Error("Could not create category due to concurrent updates");
+    const existing =
+      (db.categories ?? []).find((c) => c.slug === slug) ||
+      (CATEGORY_META[slug]
+        ? {
+            slug,
+            label: CATEGORY_META[slug].label,
+            icon: CATEGORY_META[slug].icon,
+            blurb: CATEGORY_META[slug].blurb,
+            parent: CATEGORY_META[slug].parent ?? null,
+          }
+        : null);
+
+    if (existing) return existing;
+
+    const created: CategoryDef = {
+      slug,
+      label: rawLabel,
+      icon: "fa-tag",
+      blurb: "Browse products",
+      parent: parentSlug,
+    };
+    db.categories = [...(db.categories ?? []), created];
+    await writeCatalogDb(db);
+    return created;
   });
 }
 
@@ -584,19 +670,10 @@ export async function updateSettings(
   patch: Partial<Settings>
 ): Promise<Settings> {
   return withCatalogLock(async () => {
-    for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
-      const db = await readDbFresh();
-      const expectedVersion = db.version ?? 1;
-      db.settings = { ...db.settings, ...patch };
-
-      const latest = await loadDb();
-      if ((latest.version ?? 1) !== expectedVersion) continue;
-
-      await writeCatalogDb(db);
-      return db.settings;
-    }
-
-    throw new Error("Could not update settings due to concurrent updates");
+    const db = await readDbFresh();
+    db.settings = { ...db.settings, ...patch };
+    await writeCatalogDb(db);
+    return db.settings;
   });
 }
 
@@ -654,115 +731,121 @@ export async function createProduct(
   const name = input.name.trim();
   if (!name) throw new Error("Name is required");
 
-  return withCatalogLock(async () => {
-    for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
-      const db = await readDbFresh();
-      const expectedVersion = db.version ?? 1;
+  const productId = `p-${Math.random().toString(36).slice(2, 8)}`;
+  const createdAt = new Date().toISOString();
 
-      let category = resolveCategorySlug(input.category.trim());
-      if (input.categoryLabel?.trim()) {
-        const rawLabel = input.categoryLabel.trim();
-        let slug = resolveCategorySlug(category || rawLabel);
-        if (!slug) slug = `category-${Date.now().toString(36)}`;
-        const existing =
-          (db.categories ?? []).find((c) => c.slug === slug) ||
-          (CATEGORY_META[slug]
-            ? {
-                slug,
-                label: CATEGORY_META[slug].label,
-                icon: CATEGORY_META[slug].icon,
-                blurb: CATEGORY_META[slug].blurb,
-                parent: CATEGORY_META[slug].parent ?? null,
-              }
-            : null);
-        if (existing) {
-          category = existing.slug;
-        } else {
-          const created: CategoryDef = {
-            slug,
-            label: rawLabel,
+  return withCatalogLock(async () => {
+    const db = await readDbFresh();
+
+    const already = db.products.find((p) => p.id === productId);
+    if (already) return already;
+
+    let category = resolveCategorySlug(input.category.trim());
+    if (input.categoryLabel?.trim()) {
+      const rawLabel = input.categoryLabel.trim();
+      let slug = resolveCategorySlug(category || rawLabel);
+      if (!slug) slug = `category-${Date.now().toString(36)}`;
+      const existing =
+        (db.categories ?? []).find((c) => c.slug === slug) ||
+        (CATEGORY_META[slug]
+          ? {
+              slug,
+              label: CATEGORY_META[slug].label,
+              icon: CATEGORY_META[slug].icon,
+              blurb: CATEGORY_META[slug].blurb,
+              parent: CATEGORY_META[slug].parent ?? null,
+            }
+          : null);
+      if (existing) {
+        category = existing.slug;
+      } else {
+        const created: CategoryDef = {
+          slug,
+          label: rawLabel,
+          icon: "fa-tag",
+          blurb: "Browse products",
+          parent: null,
+        };
+        db.categories = [...(db.categories ?? []), created];
+        category = created.slug;
+      }
+    } else if (category && !CATEGORY_META[category]) {
+      const existing = (db.categories ?? []).find((c) => c.slug === category);
+      if (!existing) {
+        db.categories = [
+          ...(db.categories ?? []),
+          {
+            slug: category,
+            label: categoryLabel(category),
             icon: "fa-tag",
             blurb: "Browse products",
             parent: null,
-          };
-          db.categories = [...(db.categories ?? []), created];
-          category = created.slug;
-        }
-      } else if (category && !CATEGORY_META[category]) {
-        const existing = (db.categories ?? []).find((c) => c.slug === category);
-        if (!existing) {
-          db.categories = [
-            ...(db.categories ?? []),
-            {
-              slug: category,
-              label: categoryLabel(category),
-              icon: "fa-tag",
-              blurb: "Browse products",
-              parent: null,
-            },
-          ];
-        }
+          },
+        ];
       }
-      if (!category) throw new Error("Category is required");
+    }
+    if (!category) throw new Error("Category is required");
 
-      const leaves = getLeafCategories(db.categories);
-      const parents = getParentCategories(db.categories);
-      const isLeaf = leaves.some((c) => c.slug === category);
-      const isParentOnly = parents.some(
-        (c) =>
-          c.slug === category &&
-          getChildCategories(c.slug, db.categories).length > 0
-      );
-      if (!isLeaf || isParentOnly) {
-        throw new Error("Pick a subcategory (not a parent category)");
-      }
-
-      let slug = slugify(name) || `product-${Date.now()}`;
-      const slugTaken = db.products.some((p) => p.slug === slug);
-      if (slugTaken) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
-
-      const now = new Date().toISOString();
-      const product: Product = {
-        id: `p-${Math.random().toString(36).slice(2, 8)}`,
-        name,
-        slug,
-        category,
-        type: input.type === "pack" ? "pack" : "product",
-        status: input.status === "inactive" ? "inactive" : "active",
-        description: (input.description || "").trim(),
-        images: input.images?.length
-          ? input.images
-          : ["/products/appliance.svg"],
-        imageVariants: input.imageVariants,
-        cost: Number(input.cost) || 0,
-        sellPrice: Number(input.sellPrice) || 0,
-        mrp: input.mrp != null && input.mrp > 0 ? Number(input.mrp) : undefined,
-        platformPrice: Number(input.platformPrice) || 0,
-        platformName: (input.platformName || "Meesho").trim() || "Meesho",
-        platformUrl: (input.platformUrl || "").trim(),
-        stock: Math.max(0, Math.floor(Number(input.stock) || 0)),
-        commissionPercent:
-          input.commissionPercent === undefined ||
-          input.commissionPercent === null
-            ? null
-            : Math.min(
-                100,
-                Math.max(0, Number(input.commissionPercent) || 0)
-              ),
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      db.products.unshift(product);
-
-      const latest = await loadDb();
-      if ((latest.version ?? 1) !== expectedVersion) continue;
-
-      await writeCatalogDb(db);
-      return product;
+    const leaves = getLeafCategories(db.categories);
+    const parents = getParentCategories(db.categories);
+    const isLeaf = leaves.some((c) => c.slug === category);
+    const isParentOnly = parents.some(
+      (c) =>
+        c.slug === category &&
+        getChildCategories(c.slug, db.categories).length > 0
+    );
+    if (!isLeaf || isParentOnly) {
+      throw new Error("Pick a subcategory (not a parent category)");
     }
 
-    throw new Error("Could not create product due to concurrent updates");
+    let slug = slugify(name) || `product-${Date.now()}`;
+    const slugTaken = db.products.some(
+      (p) => p.slug === slug && p.id !== productId
+    );
+    if (slugTaken) slug = `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+
+    const product: Product = {
+      id: productId,
+      name,
+      slug,
+      category,
+      type: input.type === "pack" ? "pack" : "product",
+      status: input.status === "inactive" ? "inactive" : "active",
+      description: (input.description || "").trim(),
+      images: input.images?.length
+        ? input.images
+        : ["/products/appliance.svg"],
+      imageVariants: input.imageVariants,
+      cost: Number(input.cost) || 0,
+      sellPrice: Number(input.sellPrice) || 0,
+      mrp: input.mrp != null && input.mrp > 0 ? Number(input.mrp) : undefined,
+      platformPrice: Number(input.platformPrice) || 0,
+      platformName: (input.platformName || "Meesho").trim() || "Meesho",
+      platformUrl: (input.platformUrl || "").trim(),
+      stock: Math.max(0, Math.floor(Number(input.stock) || 0)),
+      commissionPercent:
+        input.commissionPercent === undefined ||
+        input.commissionPercent === null
+          ? null
+          : Math.min(100, Math.max(0, Number(input.commissionPercent) || 0)),
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    // 1) Durable product document first (unique path — no catalog race).
+    await writeProductBlob(product);
+
+    // 2) Refresh catalog index (best-effort merge so concurrent creates survive).
+    const latest = await readDbFresh();
+    const byId = new Map(latest.products.map((p) => [p.id, p]));
+    byId.set(product.id, product);
+    latest.products = Array.from(byId.values()).sort(
+      (a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)
+    );
+    latest.categories = db.categories;
+    await writeCatalogDb(latest);
+
+    return product;
   });
 }
 
@@ -771,27 +854,31 @@ export async function updateProduct(
   patch: ProductUpdate
 ): Promise<Product | null> {
   return withCatalogLock(async () => {
-    for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
-      const db = await readDbFresh();
-      const expectedVersion = db.version ?? 1;
-      const index = db.products.findIndex((p) => p.id === id);
-      if (index === -1) return null;
-
-      const next: Product = {
-        ...db.products[index],
+    const db = await readDbFresh();
+    const index = db.products.findIndex((p) => p.id === id);
+    if (index === -1) {
+      const fromBlob = await readProductBlob(id);
+      if (!fromBlob) return null;
+      const next = {
+        ...fromBlob,
         ...patch,
         updatedAt: new Date().toISOString(),
       };
-      db.products[index] = next;
-
-      const latest = await loadDb();
-      if ((latest.version ?? 1) !== expectedVersion) continue;
-
+      await writeProductBlob(next);
+      db.products.unshift(next);
       await writeCatalogDb(db);
       return next;
     }
 
-    throw new Error("Could not save product due to concurrent updates");
+    const next: Product = {
+      ...db.products[index],
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    db.products[index] = next;
+    await writeProductBlob(next);
+    await writeCatalogDb(db);
+    return next;
   });
 }
 
