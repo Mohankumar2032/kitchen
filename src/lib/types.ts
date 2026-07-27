@@ -166,7 +166,7 @@ export function toPublicProduct(product: Product): PublicProduct {
     id: product.id,
     name: product.name,
     slug: product.slug,
-    category: product.category,
+    category: resolveCategorySlug(product.category),
     type: product.type,
     status: product.status,
     description: product.description,
@@ -508,12 +508,30 @@ export function allCategoryDefs(
 ): CategoryDef[] {
   const map = new Map<string, CategoryDef>();
   for (const item of CATEGORY_TREE) map.set(item.slug, item);
+
   for (const item of custom ?? []) {
-    map.set(item.slug, {
+    const slug = resolveCategorySlug(item.slug);
+    const builtIn = CATEGORY_META[slug] ? map.get(slug) : undefined;
+
+    if (builtIn) {
+      // Never let a stored custom row detach/reparent a built-in category.
+      map.set(slug, {
+        ...builtIn,
+        label: item.label?.trim() || builtIn.label,
+        icon: item.icon || builtIn.icon,
+        blurb: item.blurb || builtIn.blurb,
+        parent: builtIn.parent,
+      });
+      continue;
+    }
+
+    map.set(slug, {
       ...item,
-      parent: item.parent ?? null,
+      slug,
+      parent: item.parent ? resolveCategorySlug(item.parent) : null,
     });
   }
+
   return [...map.values()];
 }
 
@@ -549,7 +567,12 @@ export function matchingCategorySlugs(
   const resolved = resolveCategorySlug(slug);
   const children = getChildCategories(resolved, custom);
   if (children.length === 0) return [resolved];
-  return [resolved, ...children.map((c) => c.slug)];
+  return [resolved, ...children.map((c) => resolveCategorySlug(c.slug))];
+}
+
+/** Normalize a product category for filtering / counts. */
+export function productCategorySlug(category: string): string {
+  return resolveCategorySlug(category);
 }
 
 export function categoryPathLabel(

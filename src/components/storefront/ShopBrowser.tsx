@@ -10,6 +10,7 @@ import {
   getParentCategories,
 } from "@/lib/types";
 import type { CategoryCountMap } from "@/lib/shop-query";
+import { filterShopProducts } from "@/lib/shop-query";
 import { cn } from "@/lib/utils";
 import { ProductCard } from "./ProductCard";
 
@@ -268,8 +269,12 @@ export function ShopBrowser({
 
   function selectCategory(next: string) {
     const nextCategory = next === "all" ? "all" : next;
+    // Drop stale cards immediately so parent/child switches never show wrong items.
+    setProducts([]);
+    setTotal(0);
+    setPage(1);
+    setHasMore(false);
     void setCategory(nextCategory === "all" ? null : nextCategory);
-    // Fetch immediately with the clicked category (don't wait for nuqs/RSC).
     void fetchPage(1, true, { category: nextCategory, q: query || "" });
   }
 
@@ -289,10 +294,24 @@ export function ShopBrowser({
       .filter((item) => item.count > 0);
   }, [categories, categoryCounts]);
 
-  const activeMobileParent = visibleParents.find(
-    ({ parent, children }) =>
-      parent.slug === activeCategory ||
+  const activeMobileParent = useMemo(() => {
+    // Prefer exact parent match, then parent of the active leaf.
+    const exact = visibleParents.find(
+      ({ parent }) => parent.slug === activeCategory
+    );
+    if (exact) return exact;
+    return visibleParents.find(({ children }) =>
       children.some((child) => child.slug === activeCategory)
+    );
+  }, [visibleParents, activeCategory]);
+
+  const displayedProducts = useMemo(
+    () =>
+      filterShopProducts(products, categories, {
+        category: activeCategory,
+        q: query || "",
+      }),
+    [products, categories, activeCategory, query]
   );
 
   return (
@@ -368,21 +387,25 @@ export function ShopBrowser({
             </div>
           </div>
 
-          {products.length === 0 ? (
+          {displayedProducts.length === 0 ? (
             <div className="panel p-10 text-center sm:p-12">
               <i
                 className="fa-solid fa-box-open mb-3 text-2xl text-theme"
                 aria-hidden
               />
-              <p className="font-semibold">No products found</p>
+              <p className="font-semibold">
+                {isFetching ? "Loading products…" : "No products found"}
+              </p>
               <p className="mt-1 text-muted">
-                Try another category or search term.
+                {isFetching
+                  ? "Fetching the selected category."
+                  : "Try another category or search term."}
               </p>
             </div>
           ) : (
             <>
               <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
-                {products.map((product, index) => (
+                {displayedProducts.map((product, index) => (
                   <ProductCard
                     key={product.id}
                     product={product}
@@ -393,7 +416,7 @@ export function ShopBrowser({
 
               <div className="flex flex-col items-center gap-2 pt-1">
                 <p className="text-[11px] text-muted">
-                  Showing {products.length} of {total} products
+                  Showing {displayedProducts.length} of {total} products
                   {isFetching ? " · Updating…" : ""}
                 </p>
                 {hasMore ? (

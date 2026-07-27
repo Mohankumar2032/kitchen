@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { ShopBrowser } from "@/components/storefront/ShopBrowser";
 import { getPublicCatalog } from "@/lib/catalog";
 import {
@@ -13,6 +14,7 @@ type Props = {
 };
 
 async function ShopPageContent({ searchParams }: Props) {
+  await connection();
   const params = await searchParams;
   const query = parseShopQuery(params);
   const { products, categories, categoryCounts, totalActive } =

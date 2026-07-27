@@ -8,10 +8,10 @@
   "categories": [
     {
       "slug": "organizers",
-      "label": "Kitchen Organizer",
-      "icon": "fa-tag",
-      "blurb": "Browse products",
-      "parent": null
+      "label": "Organizers",
+      "icon": "fa-table-cells-large",
+      "blurb": "Racks, stands & organisers",
+      "parent": "storage"
     }
   ],
   "products": [

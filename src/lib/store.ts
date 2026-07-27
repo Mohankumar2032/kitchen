@@ -14,7 +14,6 @@ import type {
 } from "./types";
 import {
   CATEGORY_META,
-  CATEGORY_TREE,
   allCategoryDefs,
   categoryLabel,
   getChildCategories,
@@ -426,25 +425,20 @@ export async function listCategoryOptions(): Promise<CategoryDef[]> {
   const db = await readDb();
   const map = new Map<string, CategoryDef>();
 
-  for (const item of CATEGORY_TREE) {
+  for (const item of allCategoryDefs(db.categories)) {
     map.set(item.slug, item);
   }
-  for (const custom of db.categories ?? []) {
-    map.set(custom.slug, {
-      ...custom,
-      parent: custom.parent ?? null,
-    });
-  }
+
   for (const product of db.products) {
-    if (!map.has(product.category)) {
-      map.set(product.category, {
-        slug: product.category,
-        label: categoryLabel(product.category, db.categories),
-        icon: "fa-tag",
-        blurb: "Browse products",
-        parent: null,
-      });
-    }
+    const slug = resolveCategorySlug(product.category);
+    if (map.has(slug)) continue;
+    map.set(slug, {
+      slug,
+      label: categoryLabel(slug, db.categories),
+      icon: "fa-tag",
+      blurb: "Browse products",
+      parent: null,
+    });
   }
 
   const parents = [...map.values()]

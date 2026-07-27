@@ -2,6 +2,7 @@ import type { CategoryDef, PublicProduct } from "@/lib/types";
 import {
   categoryLabel,
   matchingCategorySlugs,
+  productCategorySlug,
 } from "@/lib/types";
 
 export const SHOP_PAGE_SIZE = 24;
@@ -53,7 +54,9 @@ export function computeCategoryCounts(
   const counts: CategoryCountMap = {};
   for (const item of categories) {
     const match = new Set(matchingCategorySlugs(item.slug, categories));
-    counts[item.slug] = products.filter((p) => match.has(p.category)).length;
+    counts[item.slug] = products.filter((p) =>
+      match.has(productCategorySlug(p.category))
+    ).length;
   }
   return counts;
 }
@@ -70,13 +73,14 @@ export function filterShopProducts(
       : new Set(matchingCategorySlugs(query.category, categories));
 
   return products.filter((p) => {
-    if (matchSlugs && !matchSlugs.has(p.category)) return false;
+    const category = productCategorySlug(p.category);
+    if (matchSlugs && !matchSlugs.has(category)) return false;
     if (!q) return true;
     return (
       p.name.toLowerCase().includes(q) ||
       p.description.toLowerCase().includes(q) ||
-      p.category.toLowerCase().includes(q) ||
-      categoryLabel(p.category, categories).toLowerCase().includes(q)
+      category.toLowerCase().includes(q) ||
+      categoryLabel(category, categories).toLowerCase().includes(q)
     );
   });
 }
