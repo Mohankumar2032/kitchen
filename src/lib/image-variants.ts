@@ -15,10 +15,17 @@ const VARIANT_SPECS = [
 
 /**
  * Sharp/native Buffers may be SharedArrayBuffer-backed; undici and
- * @vercel/blob reject those. Copy into a plain ArrayBuffer-backed Buffer.
+ * @vercel/blob reject those. Always allocate a fresh non-shared copy.
  */
+export function toTransferableBytes(data: Uint8Array | Buffer): Uint8Array {
+  const copy = new Uint8Array(data.byteLength);
+  copy.set(data);
+  return copy;
+}
+
+/** Same as toTransferableBytes, returned as a Node Buffer for local fs writes. */
 export function toTransferableBuffer(data: Uint8Array | Buffer): Buffer {
-  return Buffer.from(new Uint8Array(data));
+  return Buffer.from(toTransferableBytes(data));
 }
 
 function tinyBlurDataUrl(buffer: Buffer): string {

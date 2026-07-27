@@ -7,6 +7,7 @@ import {
   buildImageVariantBuffers,
   composeVariants,
   toTransferableBuffer,
+  toTransferableBytes,
 } from "@/lib/image-variants";
 
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -43,14 +44,14 @@ function canUseBlob(): boolean {
 
 async function storeBuffer(
   pathname: string,
-  buffer: Buffer,
+  buffer: Uint8Array | Buffer,
   contentType: string
 ): Promise<string> {
-  // Copy so Blob/undici never sees a SharedArrayBuffer-backed view.
-  const payload = toTransferableBuffer(buffer);
+  // Plain Uint8Array / Blob — never pass a Node Buffer that may wrap SharedArrayBuffer.
+  const bytes = toTransferableBytes(buffer);
 
   if (canUseBlob()) {
-    const blob = await put(pathname, payload, {
+    const blob = await put(pathname, new Blob([bytes], { type: contentType }), {
       access: "public",
       addRandomSuffix: false,
       contentType,
@@ -64,7 +65,7 @@ async function storeBuffer(
   const uploadsDir = path.join(process.cwd(), "public", "uploads");
   await fs.mkdir(uploadsDir, { recursive: true });
   const localName = path.basename(pathname);
-  await fs.writeFile(path.join(uploadsDir, localName), payload);
+  await fs.writeFile(path.join(uploadsDir, localName), Buffer.from(bytes));
   return `/uploads/${localName}`;
 }
 
@@ -142,7 +143,28 @@ export async function POST(req: Request) {
     const input = toTransferableBuffer(
       new Uint8Array(await file.arrayBuffer())
     );
-    const buffers = await buildImageVariantBuffers(input);
+
+    let buffers: Awaited<ReturnType<typeof buildImageVariantBuffers>>;
+    try {
+      buffers = await buildImageVariantBuffers(input);
+    } catch (sharpError) {
+      console.error("Sharp variant build failed; storing original", sharpError);
+      // Fallback: store the uploaded bytes once so admin product create isn't blocked.
+      const ext = safeExt(file);
+      const pathname = `products/${stamp}-${id}.${ext}`;
+      const url = await storeBuffer(pathname, input, file.type);
+      return NextResponse.json({
+        url,
+        variants: {
+          thumb: url,
+          card: url,
+          gallery: url,
+          original: url,
+        },
+        storage: canUseBlob() ? ("blob" as const) : ("local" as const),
+      });
+    }
+
     const base = `products/${stamp}-${id}`;
 
     const [thumb, card, gallery, original] = await Promise.all([
