@@ -124,7 +124,7 @@ export function SiteFooter({
 
       <div className="border-t border-border">
         <div className="container-store flex flex-col gap-1.5 py-3 text-[10px] text-muted sm:flex-row sm:items-center sm:justify-between sm:text-[11px]">
-          <p>© {new Date().getFullYear()} Kitchen. All rights reserved.</p>
+          <p>© 2026 Kitchen. All rights reserved.</p>
           <p>Clear pricing · Secure checkout · Friendly support</p>
         </div>
       </div>

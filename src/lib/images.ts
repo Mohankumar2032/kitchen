@@ -21,16 +21,21 @@ export function isImageSrc(url: string): boolean {
   return url.startsWith("/") || url.startsWith("https://");
 }
 
+/** Only bypass Next image optimization for SVGs (vector / CSP sandbox). */
 export function isUnoptimizedImage(url: string): boolean {
-  return (
-    url.endsWith(".svg") ||
-    url.includes(".svg?") ||
-    // Meesho / CDN URLs often fail Next image optimization; serve direct
-    url.startsWith("https://")
-  );
+  return url.endsWith(".svg") || url.includes(".svg?");
 }
 
 /** Local /uploads files are gitignored and missing on Vercel. */
 export function isEphemeralUploadPath(url: string): boolean {
   return url.startsWith("/uploads/");
+}
+
+/** Prefer card variant path when a product stores multiple sizes. */
+export function pickCardImage(
+  images: string[],
+  variants?: Array<{ card?: string; src?: string }>
+): string {
+  if (variants?.[0]?.card) return variants[0].card;
+  return images[0] || "/products/appliance.svg";
 }

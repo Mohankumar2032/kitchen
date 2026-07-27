@@ -1,33 +1,23 @@
-export const SHOP_FILTER_EVENT = "shop-filter-change";
+/** Build storefront shop URLs. Prefer App Router navigation over history hacks. */
 
 export interface ShopFilterDetail {
   category?: string;
   query?: string;
+  page?: number;
 }
 
-export function updateShopUrl(detail: ShopFilterDetail): void {
-  const params = new URLSearchParams(window.location.search);
+export function buildShopHref(detail: ShopFilterDetail): string {
+  const params = new URLSearchParams();
 
   if (detail.category !== undefined) {
-    if (detail.category === "all") params.delete("category");
-    else params.set("category", detail.category);
+    if (detail.category && detail.category !== "all") {
+      params.set("category", detail.category);
+    }
   }
 
-  if (detail.query !== undefined) {
-    if (detail.query) params.set("q", detail.query);
-    else params.delete("q");
-  }
+  if (detail.query) params.set("q", detail.query);
+  if (detail.page && detail.page > 1) params.set("page", String(detail.page));
 
   const queryString = params.toString();
-  window.history.replaceState(
-    null,
-    "",
-    queryString ? `/shop?${queryString}` : "/shop"
-  );
-}
-
-export function announceShopFilter(detail: ShopFilterDetail): void {
-  window.dispatchEvent(
-    new CustomEvent<ShopFilterDetail>(SHOP_FILTER_EVENT, { detail })
-  );
+  return queryString ? `/shop?${queryString}` : "/shop";
 }

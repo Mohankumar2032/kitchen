@@ -3,8 +3,6 @@ import { sanitizeImageList } from "@/lib/images";
 import { getProductById, updateProduct } from "@/lib/store";
 import type { ProductUpdate } from "@/lib/types";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 

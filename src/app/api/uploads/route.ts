@@ -3,11 +3,13 @@ import { promises as fs } from "fs";
 import path from "path";
 import { put } from "@vercel/blob";
 import { NextResponse } from "next/server";
+import {
+  buildImageVariantBuffers,
+  composeVariants,
+} from "@/lib/image-variants";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
-const MAX_BYTES = 4.5 * 1024 * 1024;
+const MAX_BYTES = 8 * 1024 * 1024;
 const ALLOWED_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -39,6 +41,30 @@ function canUseBlob(): boolean {
   );
 }
 
+async function storeBuffer(
+  pathname: string,
+  buffer: Buffer,
+  contentType: string
+): Promise<string> {
+  if (canUseBlob()) {
+    const blob = await put(pathname, buffer, {
+      access: "public",
+      addRandomSuffix: false,
+      contentType,
+      ...(process.env.BLOB_READ_WRITE_TOKEN
+        ? { token: process.env.BLOB_READ_WRITE_TOKEN }
+        : {}),
+    });
+    return blob.url;
+  }
+
+  const uploadsDir = path.join(process.cwd(), "public", "uploads");
+  await fs.mkdir(uploadsDir, { recursive: true });
+  const localName = path.basename(pathname);
+  await fs.writeFile(path.join(uploadsDir, localName), buffer);
+  return `/uploads/${localName}`;
+}
+
 export async function POST(req: Request) {
   let form: FormData;
   try {
@@ -59,30 +85,46 @@ export async function POST(req: Request) {
   }
   if (file.size <= 0 || file.size > MAX_BYTES) {
     return NextResponse.json(
-      { error: "Image must be under 4.5 MB" },
+      { error: "Image must be under 8 MB" },
       { status: 400 }
     );
   }
 
-  const ext = safeExt(file);
   const id = randomBytes(6).toString("hex");
-  const pathname = `products/${Date.now()}-${id}.${ext}`;
+  const stamp = Date.now();
   const onVercel = Boolean(process.env.VERCEL);
 
   try {
-    if (canUseBlob()) {
-      const blob = await put(pathname, file, {
-        access: "public",
-        addRandomSuffix: false,
-        ...(process.env.BLOB_READ_WRITE_TOKEN
-          ? { token: process.env.BLOB_READ_WRITE_TOKEN }
-          : {}),
+    // SVGs stay as-is (no Sharp rasterization)
+    if (file.type === "image/svg+xml") {
+      const ext = safeExt(file);
+      const pathname = `products/${stamp}-${id}.${ext}`;
+      const buffer = Buffer.from(await file.arrayBuffer());
+
+      if (!canUseBlob() && onVercel) {
+        return NextResponse.json(
+          {
+            error:
+              "File upload needs Vercel Blob. For Meesho photos, paste the image URL and click Add URL instead.",
+          },
+          { status: 503 }
+        );
+      }
+
+      const url = await storeBuffer(pathname, buffer, file.type);
+      return NextResponse.json({
+        url,
+        variants: {
+          thumb: url,
+          card: url,
+          gallery: url,
+          original: url,
+        },
+        storage: canUseBlob() ? ("blob" as const) : ("local" as const),
       });
-      return NextResponse.json({ url: blob.url, storage: "blob" as const });
     }
 
-    // Local filesystem only works in local/dev — Vercel is read-only
-    if (onVercel) {
+    if (!canUseBlob() && onVercel) {
       return NextResponse.json(
         {
           error:
@@ -92,14 +134,29 @@ export async function POST(req: Request) {
       );
     }
 
-    const uploadsDir = path.join(process.cwd(), "public", "uploads");
-    await fs.mkdir(uploadsDir, { recursive: true });
-    const localName = `${Date.now()}-${id}.${ext}`;
-    const buffer = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(path.join(uploadsDir, localName), buffer);
+    const input = Buffer.from(await file.arrayBuffer());
+    const buffers = await buildImageVariantBuffers(input);
+    const base = `products/${stamp}-${id}`;
+
+    const [thumb, card, gallery, original] = await Promise.all([
+      storeBuffer(`${base}-thumb.webp`, buffers.thumb, "image/webp"),
+      storeBuffer(`${base}-card.webp`, buffers.card, "image/webp"),
+      storeBuffer(`${base}-gallery.webp`, buffers.gallery, "image/webp"),
+      storeBuffer(`${base}-original.webp`, buffers.original, "image/webp"),
+    ]);
+
+    const composed = composeVariants({
+      thumb,
+      card,
+      gallery,
+      original,
+      blurDataURL: buffers.blurDataURL,
+    });
+
     return NextResponse.json({
-      url: `/uploads/${localName}`,
-      storage: "local" as const,
+      url: composed.displayUrl,
+      variants: composed.variants,
+      storage: canUseBlob() ? ("blob" as const) : ("local" as const),
     });
   } catch (error) {
     console.error("Upload failed", error);

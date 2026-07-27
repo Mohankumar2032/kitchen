@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { isUnoptimizedImage } from "@/lib/images";
 import { cn } from "@/lib/utils";
 
 export function ProductGallery({
@@ -25,7 +26,7 @@ export function ProductGallery({
           priority
           sizes="(max-width: 768px) 100vw, 50vw"
           className="object-contain p-5 sm:p-8"
-          unoptimized={list[active].endsWith(".svg")}
+          unoptimized={isUnoptimizedImage(list[active])}
         />
       </div>
       {list.length > 1 ? (
@@ -50,7 +51,7 @@ export function ProductGallery({
                 sizes="72px"
                 loading="lazy"
                 className="object-contain p-2"
-                unoptimized={src.endsWith(".svg")}
+                unoptimized={isUnoptimizedImage(src)}
               />
             </button>
           ))}

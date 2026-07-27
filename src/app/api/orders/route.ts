@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { createOrder, listOrders } from "@/lib/store";
 import type { CheckoutPayload } from "@/lib/types";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 export async function GET() {
   const orders = await listOrders();

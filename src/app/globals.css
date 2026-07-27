@@ -440,6 +440,16 @@ textarea {
   box-shadow: 0 4px 12px color-mix(in srgb, var(--theme) 25%, transparent);
 }
 
+.side-link.ancestor-active {
+  background: var(--hover-tint);
+  color: var(--theme);
+  font-weight: 600;
+}
+
+.side-link.ancestor-active + div {
+  border-left-color: color-mix(in srgb, var(--theme) 45%, var(--border));
+}
+
 .product-card {
   display: flex;
   flex-direction: column;
@@ -601,6 +611,18 @@ textarea {
 
 .fade-up {
   animation: fade-up 0.4s ease both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up {
+    animation: none;
+  }
+
+  .product-card img,
+  .group:hover .product-card img {
+    transition: none !important;
+    transform: none !important;
+  }
 }
 
 .price {

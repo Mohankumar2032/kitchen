@@ -1,41 +1,14 @@
 import { Suspense } from "react";
 import { CartProvider } from "./CartProvider";
 import { SiteFooter } from "./SiteFooter";
-import { SiteHeader, type NavCategory } from "./SiteHeader";
-import { listActiveProducts, listCategoryOptions } from "@/lib/store";
-import {
-  getChildCategories,
-  getParentCategories,
-  matchingCategorySlugs,
-} from "@/lib/types";
-
-async function loadAvailableParents(): Promise<NavCategory[]> {
-  const [products, categories] = await Promise.all([
-    listActiveProducts(),
-    listCategoryOptions(),
-  ]);
-
-  return getParentCategories(categories)
-    .filter((parent) => parent.slug !== "packs")
-    .map((parent) => {
-      const match = new Set(matchingCategorySlugs(parent.slug, categories));
-      const count = products.filter((p) => match.has(p.category)).length;
-      const childSlugs = getChildCategories(parent.slug, categories).map(
-        (child) => child.slug
-      );
-      return {
-        slug: parent.slug,
-        label: parent.label,
-        childSlugs,
-        count,
-      };
-    })
-    .filter((parent) => parent.count > 0)
-    .map(({ slug, label, childSlugs }) => ({ slug, label, childSlugs }));
-}
+import { SiteHeader } from "./SiteHeader";
+import { getNavCategories } from "@/lib/catalog";
 
 export async function StoreShell({ children }: { children: React.ReactNode }) {
-  const availableParents = await loadAvailableParents();
+  const availableParents = await getNavCategories();
+  const footerCategories = availableParents.map(
+    ({ slug, label, childSlugs }) => ({ slug, label, childSlugs })
+  );
 
   return (
     <CartProvider>
@@ -44,7 +17,7 @@ export async function StoreShell({ children }: { children: React.ReactNode }) {
           <SiteHeader availableParents={availableParents} />
         </Suspense>
         <div className="flex-1">{children}</div>
-        <SiteFooter categories={availableParents} />
+        <SiteFooter categories={footerCategories} />
       </div>
     </CartProvider>
   );

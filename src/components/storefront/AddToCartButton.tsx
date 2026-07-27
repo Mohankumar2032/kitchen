@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PublicProduct } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useCart } from "./CartProvider";
@@ -16,7 +16,14 @@ export function AddToCartButton({
 }) {
   const { addItem } = useCart();
   const [added, setAdded] = useState(false);
+  const timeoutRef = useRef<number | null>(null);
   const disabled = product.stock <= 0;
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current != null) window.clearTimeout(timeoutRef.current);
+    };
+  }, []);
 
   function onAdd() {
     if (disabled) return;
@@ -29,7 +36,8 @@ export function AddToCartButton({
       stock: product.stock,
     });
     setAdded(true);
-    window.setTimeout(() => setAdded(false), 1400);
+    if (timeoutRef.current != null) window.clearTimeout(timeoutRef.current);
+    timeoutRef.current = window.setTimeout(() => setAdded(false), 1400);
   }
 
   return (

@@ -1,26 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryState, parseAsString } from "nuqs";
 import type { CategoryDef, PublicProduct } from "@/lib/types";
 import {
   categoryLabel,
   categoryMeta,
   getChildCategories,
   getParentCategories,
-  matchingCategorySlugs,
 } from "@/lib/types";
-import {
-  announceShopFilter,
-  SHOP_FILTER_EVENT,
-  updateShopUrl,
-  type ShopFilterDetail,
-} from "@/lib/shop-navigation";
+import type { CategoryCountMap } from "@/lib/shop-query";
 import { cn } from "@/lib/utils";
 import { ProductCard } from "./ProductCard";
 
-const PRODUCTS_PER_PAGE = 24;
 const DESKTOP_BREAKPOINT = "(min-width: 1024px)";
+const SEARCH_DEBOUNCE_MS = 220;
 
 type VisibleParent = {
   parent: CategoryDef;
@@ -39,7 +33,7 @@ function CategoryNav({
 }: {
   productsCount: number;
   visibleParents: VisibleParent[];
-  counts: Map<string, number>;
+  counts: CategoryCountMap;
   categories: CategoryDef[];
   category: string;
   onSelect: (slug: string) => void;
@@ -61,7 +55,10 @@ function CategoryNav({
 
       {visibleParents.map(({ parent, children, count }) => {
         const meta = categoryMeta(parent.slug, categories);
-        const parentActive = category === parent.slug;
+        const isParentActive = category === parent.slug;
+        const hasActiveChild = children.some(
+          (child) => child.slug === category
+        );
 
         return (
           <div key={parent.slug} className="mt-1">
@@ -69,9 +66,11 @@ function CategoryNav({
               type="button"
               className={cn(
                 "side-link w-full touch-manipulation",
-                parentActive && "active"
+                isParentActive && "active",
+                hasActiveChild && "ancestor-active"
               )}
               onClick={() => onSelect(parent.slug)}
+              aria-current={isParentActive ? "page" : undefined}
             >
               <span className="inline-flex min-w-0 items-center gap-2">
                 <i
@@ -94,10 +93,13 @@ function CategoryNav({
                       category === child.slug && "active"
                     )}
                     onClick={() => onSelect(child.slug)}
+                    aria-current={
+                      category === child.slug ? "page" : undefined
+                    }
                   >
                     <span className="truncate">{child.label}</span>
                     <span className="ml-2 shrink-0 opacity-80">
-                      {counts.get(child.slug) || 0}
+                      {counts[child.slug] || 0}
                     </span>
                   </button>
                 ))}
@@ -110,143 +112,191 @@ function CategoryNav({
   );
 }
 
+function filterKey(category: string, q: string): string {
+  return `${category || "all"}:${q || ""}`;
+}
+
 export function ShopBrowser({
-  products,
+  initialProducts,
+  totalFiltered,
+  totalActive,
   categories,
+  categoryCounts,
   initialCategory = "all",
   initialQuery = "",
+  pageSize,
 }: {
-  products: PublicProduct[];
+  initialProducts: PublicProduct[];
+  totalFiltered: number;
+  totalActive: number;
   categories: CategoryDef[];
+  categoryCounts: CategoryCountMap;
   initialCategory?: string;
   initialQuery?: string;
+  pageSize: number;
 }) {
-  const searchParams = useSearchParams();
-  const categoryFromUrl =
-    searchParams.get("category") || initialCategory || "all";
-  const queryFromUrl = searchParams.get("q") || initialQuery || "";
+  const [category, setCategory] = useQueryState(
+    "category",
+    parseAsString.withDefault(initialCategory === "all" ? "" : initialCategory)
+  );
+  const [query, setQuery] = useQueryState(
+    "q",
+    parseAsString.withDefault(initialQuery)
+  );
 
-  const [category, setCategory] = useState(categoryFromUrl);
-  const [query, setQuery] = useState(queryFromUrl);
-  const [visibleCount, setVisibleCount] = useState(PRODUCTS_PER_PAGE);
+  const activeCategory = category || "all";
+  const [searchInput, setSearchInput] = useState(query || "");
+  const [products, setProducts] = useState(initialProducts);
+  const [total, setTotal] = useState(totalFiltered);
+  const [page, setPage] = useState(1);
+  const [isFetching, setIsFetching] = useState(false);
+  const [hasMore, setHasMore] = useState(initialProducts.length < totalFiltered);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const fetchAbortRef = useRef<AbortController | null>(null);
+  const appliedFilterRef = useRef(
+    filterKey(initialCategory || "all", initialQuery || "")
+  );
+  const skipNextFilterFetchRef = useRef(true);
 
   useEffect(() => {
-    function handleFilterChange(event: Event) {
-      const detail = (event as CustomEvent<ShopFilterDetail>).detail;
-      if (detail.category !== undefined) setCategory(detail.category);
-      if (detail.query !== undefined) setQuery(detail.query);
-      setVisibleCount(PRODUCTS_PER_PAGE);
-    }
+    setProducts(initialProducts);
+    setTotal(totalFiltered);
+    setPage(1);
+    setHasMore(initialProducts.length < totalFiltered);
+    appliedFilterRef.current = filterKey(
+      initialCategory || "all",
+      initialQuery || ""
+    );
+    skipNextFilterFetchRef.current = true;
+  }, [initialProducts, totalFiltered, initialCategory, initialQuery]);
 
-    function handleHistoryChange() {
-      const params = new URLSearchParams(window.location.search);
-      setCategory(params.get("category") || "all");
-      setQuery(params.get("q") || "");
-      setVisibleCount(PRODUCTS_PER_PAGE);
-    }
+  useEffect(() => {
+    setSearchInput(query || "");
+  }, [query]);
 
-    window.addEventListener(SHOP_FILTER_EVENT, handleFilterChange);
-    window.addEventListener("popstate", handleHistoryChange);
-    return () => {
-      window.removeEventListener(SHOP_FILTER_EVENT, handleFilterChange);
-      window.removeEventListener("popstate", handleHistoryChange);
-    };
-  }, []);
+  const fetchPage = useCallback(
+    async (
+      nextPage: number,
+      replace: boolean,
+      overrides?: { category?: string; q?: string }
+    ) => {
+      const nextCategory = overrides?.category ?? activeCategory;
+      const nextQuery = overrides?.q ?? query ?? "";
 
-  const counts = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const item of categories) {
-      const match = new Set(matchingCategorySlugs(item.slug, categories));
-      map.set(
-        item.slug,
-        products.filter((p) => match.has(p.category)).length
-      );
-    }
-    return map;
-  }, [products, categories]);
+      fetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      fetchAbortRef.current = controller;
+      setIsFetching(true);
 
-  const visibleParents = useMemo(() => {
-    return getParentCategories(categories)
-      .filter((c) => c.slug !== "packs")
-      .map((parent) => {
-        const children = getChildCategories(parent.slug, categories).filter(
-          (child) => (counts.get(child.slug) || 0) > 0
+      try {
+        const params = new URLSearchParams();
+        if (nextCategory !== "all") params.set("category", nextCategory);
+        if (nextQuery) params.set("q", nextQuery);
+        params.set("page", String(nextPage));
+        params.set("pageSize", String(pageSize));
+
+        const res = await fetch(`/api/shop?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          products: PublicProduct[];
+          total: number;
+          hasMore: boolean;
+          page: number;
+        };
+
+        appliedFilterRef.current = filterKey(nextCategory, nextQuery);
+        setTotal(data.total);
+        setHasMore(data.hasMore);
+        setPage(data.page);
+        setProducts((prev) =>
+          replace ? data.products : [...prev, ...data.products]
         );
-        return { parent, children, count: counts.get(parent.slug) || 0 };
-      })
-      .filter((item) => item.count > 0);
-  }, [categories, counts]);
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return;
+      } finally {
+        setIsFetching(false);
+      }
+    },
+    [activeCategory, query, pageSize]
+  );
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const matchSlugs =
-      category === "all"
-        ? null
-        : new Set(matchingCategorySlugs(category, categories));
-
-    let list = products.filter((p) => {
-      if (matchSlugs && !matchSlugs.has(p.category)) return false;
-      if (!q) return true;
-      return (
-        p.name.toLowerCase().includes(q) ||
-        p.description.toLowerCase().includes(q) ||
-        p.category.toLowerCase().includes(q) ||
-        categoryLabel(p.category, categories).toLowerCase().includes(q)
-      );
+  // When URL filter changes (sidebar, header, back/forward), load matching products.
+  useEffect(() => {
+    const key = filterKey(activeCategory, query || "");
+    if (skipNextFilterFetchRef.current) {
+      skipNextFilterFetchRef.current = false;
+      appliedFilterRef.current = key;
+      return;
+    }
+    if (key === appliedFilterRef.current) return;
+    void fetchPage(1, true, {
+      category: activeCategory,
+      q: query || "",
     });
+  }, [activeCategory, query, fetchPage]);
 
-    list = [...list];
-    return list;
-  }, [products, category, query, categories]);
-
-  const filteredCount = filtered.length;
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      const next = searchInput.trim();
+      if (next === (query || "")) return;
+      void setQuery(next || null);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [searchInput, setQuery, query]);
 
   useEffect(() => {
     const node = loadMoreRef.current;
-    if (!node) return;
+    if (!node || !hasMore) return;
 
     const media = window.matchMedia(DESKTOP_BREAKPOINT);
     if (media.matches) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries[0]?.isIntersecting) return;
-        setVisibleCount((count) =>
-          count < filteredCount ? count + PRODUCTS_PER_PAGE : count
-        );
+        if (!entries[0]?.isIntersecting || isFetching) return;
+        void fetchPage(page + 1, false);
       },
       { rootMargin: "280px 0px" }
     );
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [filteredCount, visibleCount, category, query]);
+  }, [fetchPage, hasMore, isFetching, page]);
 
   function selectCategory(next: string) {
-    setCategory(next);
-    setVisibleCount(PRODUCTS_PER_PAGE);
-    updateShopUrl({ category: next });
-    announceShopFilter({ category: next });
+    const nextCategory = next === "all" ? "all" : next;
+    void setCategory(nextCategory === "all" ? null : nextCategory);
+    // Fetch immediately with the clicked category (don't wait for nuqs/RSC).
+    void fetchPage(1, true, { category: nextCategory, q: query || "" });
   }
 
-  function updateQuery(next: string) {
-    setQuery(next);
-    setVisibleCount(PRODUCTS_PER_PAGE);
-  }
-
-  const visibleProducts = filtered.slice(0, visibleCount);
-  const hasMoreProducts = visibleCount < filtered.length;
+  const visibleParents = useMemo(() => {
+    return getParentCategories(categories)
+      .filter((c) => c.slug !== "packs")
+      .map((parent) => {
+        const children = getChildCategories(parent.slug, categories).filter(
+          (child) => (categoryCounts[child.slug] || 0) > 0
+        );
+        return {
+          parent,
+          children,
+          count: categoryCounts[parent.slug] || 0,
+        };
+      })
+      .filter((item) => item.count > 0);
+  }, [categories, categoryCounts]);
 
   const activeMobileParent = visibleParents.find(
     ({ parent, children }) =>
-      parent.slug === category ||
-      children.some((child) => child.slug === category)
+      parent.slug === activeCategory ||
+      children.some((child) => child.slug === activeCategory)
   );
 
   return (
     <div className="fade-up space-y-4">
-      {/* Mobile: header = main categories; here only subcategory pills */}
       {activeMobileParent?.children.length ? (
         <div className="panel relative z-10 p-3 lg:hidden">
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
@@ -257,7 +307,7 @@ export function ShopBrowser({
               type="button"
               className={cn(
                 "pill touch-manipulation",
-                category === activeMobileParent.parent.slug && "active"
+                activeCategory === activeMobileParent.parent.slug && "active"
               )}
               onClick={() => selectCategory(activeMobileParent.parent.slug)}
             >
@@ -269,11 +319,11 @@ export function ShopBrowser({
                 type="button"
                 className={cn(
                   "pill touch-manipulation",
-                  category === child.slug && "active"
+                  activeCategory === child.slug && "active"
                 )}
                 onClick={() => selectCategory(child.slug)}
               >
-                {child.label} ({counts.get(child.slug) || 0})
+                {child.label} ({categoryCounts[child.slug] || 0})
               </button>
             ))}
           </div>
@@ -287,11 +337,11 @@ export function ShopBrowser({
           </p>
           <div className="flex-1 overflow-y-auto overscroll-contain p-2">
             <CategoryNav
-              productsCount={products.length}
+              productsCount={totalActive}
               visibleParents={visibleParents}
-              counts={counts}
+              counts={categoryCounts}
               categories={categories}
-              category={category}
+              category={activeCategory}
               onSelect={selectCategory}
             />
           </div>
@@ -301,24 +351,24 @@ export function ShopBrowser({
           <div className="panel p-2.5 sm:p-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <h1 className="section-title mb-0">
-                {category === "all"
+                {activeCategory === "all"
                   ? "Shop"
-                  : categoryLabel(category, categories)}
+                  : categoryLabel(activeCategory, categories)}
               </h1>
               <div className="input-search-wrap hidden w-full max-w-sm lg:block">
                 <i className="fa-solid fa-magnifying-glass" aria-hidden />
                 <input
                   className="input-search"
                   placeholder="Search products..."
-                  value={query}
-                  onChange={(e) => updateQuery(e.target.value)}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
                   aria-label="Search products"
                 />
               </div>
             </div>
           </div>
 
-          {filtered.length === 0 ? (
+          {products.length === 0 ? (
             <div className="panel p-10 text-center sm:p-12">
               <i
                 className="fa-solid fa-box-open mb-3 text-2xl text-theme"
@@ -332,7 +382,7 @@ export function ShopBrowser({
           ) : (
             <>
               <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
-                {visibleProducts.map((product, index) => (
+                {products.map((product, index) => (
                   <ProductCard
                     key={product.id}
                     product={product}
@@ -343,26 +393,28 @@ export function ShopBrowser({
 
               <div className="flex flex-col items-center gap-2 pt-1">
                 <p className="text-[11px] text-muted">
-                  Showing {visibleProducts.length} of {filtered.length} products
+                  Showing {products.length} of {total} products
+                  {isFetching ? " · Updating…" : ""}
                 </p>
-                {hasMoreProducts ? (
+                {hasMore ? (
                   <>
                     <div
                       ref={loadMoreRef}
                       className="h-8 w-full lg:hidden"
                       aria-hidden
                     />
-                    <p className="text-[11px] text-muted lg:hidden">
-                      Loading more…
-                    </p>
+                    {isFetching ? (
+                      <p className="text-[11px] text-muted lg:hidden">
+                        Loading more…
+                      </p>
+                    ) : null}
                     <button
                       type="button"
                       className="btn btn-ghost hidden min-h-10 px-6 lg:inline-flex"
-                      onClick={() =>
-                        setVisibleCount((count) => count + PRODUCTS_PER_PAGE)
-                      }
+                      disabled={isFetching}
+                      onClick={() => void fetchPage(page + 1, false)}
                     >
-                      Load more products
+                      {isFetching ? "Loading…" : "Load more products"}
                       <i className="fa-solid fa-chevron-down" aria-hidden />
                     </button>
                   </>

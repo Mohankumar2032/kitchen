@@ -6,7 +6,6 @@ import {
   listProducts,
 } from "@/lib/store";
 
-export const dynamic = "force-dynamic";
 
 export default async function AdminProductsPage() {
   const [products, settings, counts, categories] = await Promise.all([

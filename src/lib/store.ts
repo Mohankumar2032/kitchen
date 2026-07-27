@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { head, put } from "@vercel/blob";
+import { revalidateTag } from "next/cache";
 import type {
   CategoryDef,
   CheckoutPayload,
@@ -24,12 +25,32 @@ import {
 } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "db.json");
-/** Durable JSON store on Vercel (local filesystem is read-only there). */
-const BLOB_DB_PATH = "kitchen/db.json";
-const READ_CACHE_TTL_MS = 2_000;
+const LEGACY_DB_PATH = path.join(DATA_DIR, "db.json");
+const CATALOG_PATH = path.join(DATA_DIR, "catalog.json");
+const ORDERS_PATH = path.join(DATA_DIR, "orders.json");
 
-let cachedDb: { value: Database; expiresAt: number } | null = null;
+const BLOB_LEGACY_PATH = "kitchen/db.json";
+const BLOB_CATALOG_PATH = "kitchen/catalog.json";
+const BLOB_ORDERS_PATH = "kitchen/orders.json";
+
+const MAX_WRITE_RETRIES = 3;
+
+interface CatalogStore {
+  version: number;
+  settings: Settings;
+  categories?: CategoryDef[];
+  products: Product[];
+}
+
+interface OrdersStore {
+  version: number;
+  orders: Order[];
+  enquiries: EnquiryLike[];
+}
+
+type EnquiryLike = Database["enquiries"][number];
+
+let cachedDb: Database | null = null;
 let pendingDbRead: Promise<Database> | null = null;
 
 function shouldUseBlobDb(): boolean {
@@ -47,24 +68,76 @@ function blobOpts() {
     : {};
 }
 
-async function readSeedDb(): Promise<Database> {
-  const raw = await fs.readFile(DB_PATH, "utf8");
-  return JSON.parse(raw) as Database;
+function emptyCatalog(): CatalogStore {
+  return {
+    version: 1,
+    settings: {
+      defaultCommissionPercent: 10,
+      storeName: "Kitchen",
+      currency: "INR",
+    },
+    categories: [],
+    products: [],
+  };
 }
 
-async function readDbFromBlob(): Promise<Database | null> {
+function emptyOrders(): OrdersStore {
+  return {
+    version: 1,
+    orders: [],
+    enquiries: [],
+  };
+}
+
+function composeDb(catalog: CatalogStore, orders: OrdersStore): Database {
+  return {
+    version: catalog.version,
+    settings: catalog.settings,
+    categories: catalog.categories ?? [],
+    products: catalog.products,
+    orders: orders.orders,
+    enquiries: orders.enquiries,
+  };
+}
+
+function splitDb(db: Database): { catalog: CatalogStore; orders: OrdersStore } {
+  return {
+    catalog: {
+      version: db.version ?? 1,
+      settings: db.settings,
+      categories: db.categories ?? [],
+      products: db.products,
+    },
+    orders: {
+      version: db.ordersVersion ?? 1,
+      orders: db.orders,
+      enquiries: db.enquiries,
+    },
+  };
+}
+
+async function readJsonFile<T>(filePath: string): Promise<T | null> {
   try {
-    const meta = await head(BLOB_DB_PATH, blobOpts());
-    const res = await fetch(meta.url, { cache: "no-store" });
-    if (!res.ok) return null;
-    return (await res.json()) as Database;
+    const raw = await fs.readFile(filePath, "utf8");
+    return JSON.parse(raw) as T;
   } catch {
     return null;
   }
 }
 
-async function writeDbToBlob(db: Database): Promise<void> {
-  await put(BLOB_DB_PATH, JSON.stringify(db, null, 2), {
+async function readBlobJson<T>(blobPath: string): Promise<T | null> {
+  try {
+    const meta = await head(blobPath, blobOpts());
+    const res = await fetch(meta.url, { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function writeBlobJson(blobPath: string, value: unknown): Promise<void> {
+  await put(blobPath, JSON.stringify(value, null, 2), {
     access: "public",
     contentType: "application/json",
     addRandomSuffix: false,
@@ -74,11 +147,88 @@ async function writeDbToBlob(db: Database): Promise<void> {
   });
 }
 
+async function readSeedLegacy(): Promise<Database> {
+  const raw = await fs.readFile(LEGACY_DB_PATH, "utf8");
+  return JSON.parse(raw) as Database;
+}
+
+async function migrateFromLegacy(db: Database): Promise<{
+  catalog: CatalogStore;
+  orders: OrdersStore;
+}> {
+  const split = splitDb({
+    ...db,
+    version: db.version ?? 1,
+    ordersVersion: db.ordersVersion ?? 1,
+  });
+  return split;
+}
+
+async function loadCatalogAndOrders(): Promise<{
+  catalog: CatalogStore;
+  orders: OrdersStore;
+}> {
+  if (shouldUseBlobDb()) {
+    const [catalog, orders, legacy] = await Promise.all([
+      readBlobJson<CatalogStore>(BLOB_CATALOG_PATH),
+      readBlobJson<OrdersStore>(BLOB_ORDERS_PATH),
+      readBlobJson<Database>(BLOB_LEGACY_PATH),
+    ]);
+
+    if (catalog && orders) return { catalog, orders };
+
+    if (legacy) {
+      const migrated = await migrateFromLegacy(normalizeDb(legacy));
+      await Promise.all([
+        writeBlobJson(BLOB_CATALOG_PATH, migrated.catalog),
+        writeBlobJson(BLOB_ORDERS_PATH, migrated.orders),
+      ]);
+      return migrated;
+    }
+
+    if (catalog && !orders) {
+      const nextOrders = emptyOrders();
+      await writeBlobJson(BLOB_ORDERS_PATH, nextOrders);
+      return { catalog, orders: nextOrders };
+    }
+
+    const seed = normalizeDb(await readSeedLegacy());
+    const migrated = await migrateFromLegacy(seed);
+    await Promise.all([
+      writeBlobJson(BLOB_CATALOG_PATH, migrated.catalog),
+      writeBlobJson(BLOB_ORDERS_PATH, migrated.orders),
+    ]);
+    return migrated;
+  }
+
+  const [catalog, orders, legacy] = await Promise.all([
+    readJsonFile<CatalogStore>(CATALOG_PATH),
+    readJsonFile<OrdersStore>(ORDERS_PATH),
+    readJsonFile<Database>(LEGACY_DB_PATH),
+  ]);
+
+  if (catalog && orders) return { catalog, orders };
+
+  if (legacy) {
+    const migrated = await migrateFromLegacy(normalizeDb(legacy));
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await Promise.all([
+      fs.writeFile(CATALOG_PATH, JSON.stringify(migrated.catalog, null, 2), "utf8"),
+      fs.writeFile(ORDERS_PATH, JSON.stringify(migrated.orders, null, 2), "utf8"),
+    ]);
+    return migrated;
+  }
+
+  return { catalog: emptyCatalog(), orders: emptyOrders() };
+}
+
 function normalizeDb(db: Database): Database {
   if (!Array.isArray(db.categories)) db.categories = [];
   if (!Array.isArray(db.products)) db.products = [];
   if (!Array.isArray(db.orders)) db.orders = [];
   if (!Array.isArray(db.enquiries)) db.enquiries = [];
+  if (typeof db.version !== "number") db.version = 1;
+  if (typeof db.ordersVersion !== "number") db.ordersVersion = 1;
 
   db.categories = db.categories.map((category) => ({
     ...category,
@@ -99,30 +249,17 @@ function cloneDb(db: Database): Database {
 }
 
 async function loadDb(): Promise<Database> {
-  if (shouldUseBlobDb()) {
-    const fromBlob = await readDbFromBlob();
-    if (fromBlob) return normalizeDb(fromBlob);
-    // First deploy: seed Blob from packaged data/db.json
-    const seed = normalizeDb(await readSeedDb());
-    await writeDbToBlob(seed);
-    return seed;
-  }
-
-  const raw = await fs.readFile(DB_PATH, "utf8");
-  return normalizeDb(JSON.parse(raw) as Database);
+  const { catalog, orders } = await loadCatalogAndOrders();
+  return normalizeDb(composeDb(catalog, orders));
 }
 
 export async function readDb(): Promise<Database> {
-  const now = Date.now();
-  if (cachedDb && cachedDb.expiresAt > now) return cloneDb(cachedDb.value);
+  if (cachedDb) return cloneDb(cachedDb);
 
   if (!pendingDbRead) {
     pendingDbRead = loadDb()
       .then((db) => {
-        cachedDb = {
-          value: cloneDb(db),
-          expiresAt: Date.now() + READ_CACHE_TTL_MS,
-        };
+        cachedDb = cloneDb(db);
         return db;
       })
       .finally(() => {
@@ -133,23 +270,65 @@ export async function readDb(): Promise<Database> {
   return cloneDb(await pendingDbRead);
 }
 
-export async function writeDb(db: Database): Promise<void> {
-  const next = normalizeDb(db);
+function invalidateCatalogCache(): void {
+  try {
+    revalidateTag("catalog", "max");
+  } catch {
+    // revalidateTag is a no-op outside a Next.js request context
+  }
+}
+
+async function persistSplit(
+  next: Database,
+  options: { catalogChanged?: boolean; ordersChanged?: boolean } = {}
+): Promise<void> {
+  const catalogChanged = options.catalogChanged ?? true;
+  const ordersChanged = options.ordersChanged ?? true;
+  const { catalog, orders } = splitDb(next);
+
   if (shouldUseBlobDb()) {
-    await writeDbToBlob(next);
-    cachedDb = {
-      value: cloneDb(next),
-      expiresAt: Date.now() + READ_CACHE_TTL_MS,
-    };
-    return;
+    const writes: Promise<void>[] = [];
+    if (catalogChanged) writes.push(writeBlobJson(BLOB_CATALOG_PATH, catalog));
+    if (ordersChanged) writes.push(writeBlobJson(BLOB_ORDERS_PATH, orders));
+    await Promise.all(writes);
+  } else {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    const writes: Promise<void>[] = [];
+    if (catalogChanged) {
+      writes.push(
+        fs.writeFile(CATALOG_PATH, JSON.stringify(catalog, null, 2), "utf8")
+      );
+    }
+    if (ordersChanged) {
+      writes.push(
+        fs.writeFile(ORDERS_PATH, JSON.stringify(orders, null, 2), "utf8")
+      );
+    }
+    await Promise.all(writes);
   }
 
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(DB_PATH, JSON.stringify(next, null, 2), "utf8");
-  cachedDb = {
-    value: cloneDb(next),
-    expiresAt: Date.now() + READ_CACHE_TTL_MS,
-  };
+  cachedDb = cloneDb(next);
+
+  if (catalogChanged) invalidateCatalogCache();
+}
+
+export async function writeDb(db: Database): Promise<void> {
+  const next = normalizeDb(db);
+  next.version = (next.version ?? 1) + 1;
+  next.ordersVersion = (next.ordersVersion ?? 1) + 1;
+  await persistSplit(next, { catalogChanged: true, ordersChanged: true });
+}
+
+async function writeCatalogDb(db: Database): Promise<void> {
+  const next = normalizeDb(db);
+  next.version = (next.version ?? 1) + 1;
+  await persistSplit(next, { catalogChanged: true, ordersChanged: false });
+}
+
+async function writeOrdersDb(db: Database): Promise<void> {
+  const next = normalizeDb(db);
+  next.ordersVersion = (next.ordersVersion ?? 1) + 1;
+  await persistSplit(next, { catalogChanged: false, ordersChanged: true });
 }
 
 export async function listCategoryOptions(): Promise<CategoryDef[]> {
@@ -188,7 +367,6 @@ export async function listCategoryOptions(): Promise<CategoryDef[]> {
       .sort((a, b) => a.label.localeCompare(b.label));
     ordered.push(...children);
   }
-  // Orphan custom leaves without a known parent
   for (const item of map.values()) {
     if (item.parent && !map.has(item.parent) && !ordered.includes(item)) {
       ordered.push(item);
@@ -249,7 +427,7 @@ export async function ensureCategory(
     parent: parentSlug,
   };
   db.categories = [...(db.categories ?? []), created];
-  await writeDb(db);
+  await writeCatalogDb(db);
   return created;
 }
 
@@ -263,7 +441,7 @@ export async function updateSettings(
 ): Promise<Settings> {
   const db = await readDb();
   db.settings = { ...db.settings, ...patch };
-  await writeDb(db);
+  await writeCatalogDb(db);
   return db.settings;
 }
 
@@ -299,12 +477,12 @@ function slugify(name: string): string {
 export type ProductCreateInput = {
   name: string;
   category: string;
-  /** When set, creates/registers a custom category with this label. */
   categoryLabel?: string;
   type?: Product["type"];
   status?: Product["status"];
   description?: string;
   images?: string[];
+  imageVariants?: Product["imageVariants"];
   cost?: number;
   sellPrice?: number;
   mrp?: number;
@@ -329,7 +507,6 @@ export async function createProduct(
     );
     category = ensured.slug;
   } else if (category && !CATEGORY_META[category]) {
-    // Persist unknown slug as a custom category for reuse in admin
     await ensureCategory(category, categoryLabel(category));
   }
   if (!category) throw new Error("Category is required");
@@ -360,6 +537,7 @@ export async function createProduct(
     status: input.status === "inactive" ? "inactive" : "active",
     description: (input.description || "").trim(),
     images: input.images?.length ? input.images : ["/products/appliance.svg"],
+    imageVariants: input.imageVariants,
     cost: Number(input.cost) || 0,
     sellPrice: Number(input.sellPrice) || 0,
     mrp: input.mrp != null && input.mrp > 0 ? Number(input.mrp) : undefined,
@@ -376,7 +554,7 @@ export async function createProduct(
   };
 
   db.products.unshift(product);
-  await writeDb(db);
+  await writeCatalogDb(db);
   return product;
 }
 
@@ -384,18 +562,28 @@ export async function updateProduct(
   id: string,
   patch: ProductUpdate
 ): Promise<Product | null> {
-  const db = await readDb();
-  const index = db.products.findIndex((p) => p.id === id);
-  if (index === -1) return null;
+  for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
+    cachedDb = null;
+    const db = await readDb();
+    const expectedVersion = db.version ?? 1;
+    const index = db.products.findIndex((p) => p.id === id);
+    if (index === -1) return null;
 
-  const next: Product = {
-    ...db.products[index],
-    ...patch,
-    updatedAt: new Date().toISOString(),
-  };
-  db.products[index] = next;
-  await writeDb(db);
-  return next;
+    const next: Product = {
+      ...db.products[index],
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    db.products[index] = next;
+
+    const latest = await loadDb();
+    if ((latest.version ?? 1) !== expectedVersion) continue;
+
+    await writeCatalogDb(db);
+    return next;
+  }
+
+  throw new Error("Could not save product due to concurrent updates");
 }
 
 export async function listOrders(): Promise<Order[]> {
@@ -411,66 +599,81 @@ export async function getOrderById(id: string): Promise<Order | null> {
 }
 
 export async function createOrder(payload: CheckoutPayload): Promise<Order> {
-  const db = await readDb();
+  for (let attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
+    cachedDb = null;
+    const db = await readDb();
+    const expectedCatalogVersion = db.version ?? 1;
+    const expectedOrdersVersion = db.ordersVersion ?? 1;
 
-  if (!payload.items?.length) {
-    throw new Error("Cart is empty");
-  }
+    if (!payload.items?.length) {
+      throw new Error("Cart is empty");
+    }
 
-  const items = payload.items.map((line) => {
-    const product = db.products.find((p) => p.id === line.productId);
-    if (!product || product.status !== "active") {
-      throw new Error(`Product unavailable: ${line.productId}`);
+    const items = payload.items.map((line) => {
+      const product = db.products.find((p) => p.id === line.productId);
+      if (!product || product.status !== "active") {
+        throw new Error(`Product unavailable: ${line.productId}`);
+      }
+      const qty = Math.max(1, Math.floor(line.qty));
+      if (product.stock < qty) {
+        throw new Error(`Insufficient stock for ${product.name}`);
+      }
+      return { product, qty };
+    });
+
+    for (const { product, qty } of items) {
+      product.stock -= qty;
+      product.updatedAt = new Date().toISOString();
     }
-    const qty = Math.max(1, Math.floor(line.qty));
-    if (product.stock < qty) {
-      throw new Error(`Insufficient stock for ${product.name}`);
-    }
-    return {
-      product,
+
+    const orderItems = items.map(({ product, qty }) => ({
+      productId: product.id,
+      productName: product.name,
       qty,
-    };
-  });
+      sellPrice: product.sellPrice,
+      platformName: product.platformName,
+      platformUrl: product.platformUrl,
+    }));
 
-  for (const { product, qty } of items) {
-    product.stock -= qty;
-    product.updatedAt = new Date().toISOString();
+    const subtotal = orderItems.reduce(
+      (sum, item) => sum + item.sellPrice * item.qty,
+      0
+    );
+
+    const order: Order = {
+      id: `ord-${Date.now().toString(36)}`,
+      items: orderItems,
+      subtotal,
+      customerName: payload.customerName.trim(),
+      customerPhone: payload.customerPhone.trim(),
+      customerEmail: (payload.customerEmail || "").trim(),
+      addressLine1: payload.addressLine1.trim(),
+      addressLine2: (payload.addressLine2 || "").trim(),
+      city: payload.city.trim(),
+      state: payload.state.trim(),
+      pincode: payload.pincode.trim(),
+      notes: (payload.notes || "").trim(),
+      status: "new",
+      createdAt: new Date().toISOString(),
+    };
+
+    db.orders.unshift(order);
+
+    const latest = await loadDb();
+    if (
+      (latest.version ?? 1) !== expectedCatalogVersion ||
+      (latest.ordersVersion ?? 1) !== expectedOrdersVersion
+    ) {
+      continue;
+    }
+
+    db.version = expectedCatalogVersion;
+    db.ordersVersion = expectedOrdersVersion;
+    await writeDb(db);
+    return order;
   }
 
-  const orderItems = items.map(({ product, qty }) => ({
-    productId: product.id,
-    productName: product.name,
-    qty,
-    sellPrice: product.sellPrice,
-    platformName: product.platformName,
-    platformUrl: product.platformUrl,
-  }));
-
-  const subtotal = orderItems.reduce(
-    (sum, item) => sum + item.sellPrice * item.qty,
-    0
-  );
-
-  const order: Order = {
-    id: `ord-${Date.now().toString(36)}`,
-    items: orderItems,
-    subtotal,
-    customerName: payload.customerName.trim(),
-    customerPhone: payload.customerPhone.trim(),
-    customerEmail: (payload.customerEmail || "").trim(),
-    addressLine1: payload.addressLine1.trim(),
-    addressLine2: (payload.addressLine2 || "").trim(),
-    city: payload.city.trim(),
-    state: payload.state.trim(),
-    pincode: payload.pincode.trim(),
-    notes: (payload.notes || "").trim(),
-    status: "new",
-    createdAt: new Date().toISOString(),
-  };
-
-  db.orders.unshift(order);
-  await writeDb(db);
-  return order;
+  throw new Error("Could not place order due to concurrent updates");
 }
 
 export async function updateOrderStatus(
@@ -481,7 +684,7 @@ export async function updateOrderStatus(
   const index = db.orders.findIndex((o) => o.id === id);
   if (index === -1) return null;
   db.orders[index] = { ...db.orders[index], status };
-  await writeDb(db);
+  await writeOrdersDb(db);
   return db.orders[index];
 }
 

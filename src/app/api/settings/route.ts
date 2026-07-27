@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { getSettings, updateSettings } from "@/lib/store";
 import type { Settings } from "@/lib/types";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 export async function GET() {
   const settings = await getSettings();

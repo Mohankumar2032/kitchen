@@ -3,6 +3,7 @@ import Link from "next/link";
 import { priceParts } from "@/lib/pricing";
 import type { PublicProduct } from "@/lib/types";
 import { categoryLabel } from "@/lib/types";
+import { isUnoptimizedImage } from "@/lib/images";
 import { AddToCartButton } from "./AddToCartButton";
 
 export function ProductCard({
@@ -24,8 +25,8 @@ export function ProductCard({
           fill
           priority={priority}
           sizes="(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"
-          className="object-contain p-3 transition-transform duration-300 group-hover:scale-[1.04] sm:p-5"
-          unoptimized={image.endsWith(".svg")}
+          className="object-contain p-3 transition-transform duration-300 motion-safe:group-hover:scale-[1.04] sm:p-5"
+          unoptimized={isUnoptimizedImage(image)}
         />
         <div className="absolute left-3 top-3 flex flex-col gap-1">
           {pricing.off ? (

@@ -7,6 +7,14 @@ export type OrderStatus =
   | "shipped"
   | "cancelled";
 
+export interface ImageVariants {
+  thumb: string;
+  card: string;
+  gallery: string;
+  original: string;
+  blurDataURL?: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -15,7 +23,10 @@ export interface Product {
   type: ProductType;
   status: ProductStatus;
   description: string;
+  /** Prefer card/WebP display URLs for storefront LCP. */
   images: string[];
+  /** Optional parallel metadata for uploaded Sharp variants. */
+  imageVariants?: ImageVariants[];
   /** What you pay when fulfilling from source (admin only) */
   cost: number;
   /** Customer-facing store price */
@@ -118,6 +129,10 @@ export interface CategoryDef {
 }
 
 export interface Database {
+  /** Optimistic concurrency token for catalog writes (settings/categories/products). */
+  version?: number;
+  /** Optimistic concurrency token for orders/enquiries writes. */
+  ordersVersion?: number;
   settings: Settings;
   /** Custom categories added from admin (merged with built-in CATEGORY_META). */
   categories?: CategoryDef[];
@@ -135,6 +150,7 @@ export type ProductUpdate = Partial<
     | "status"
     | "description"
     | "images"
+    | "imageVariants"
     | "cost"
     | "sellPrice"
     | "platformPrice"

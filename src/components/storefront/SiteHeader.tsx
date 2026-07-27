@@ -8,12 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import {
-  announceShopFilter,
-  SHOP_FILTER_EVENT,
-  updateShopUrl,
-  type ShopFilterDetail,
-} from "@/lib/shop-navigation";
+import { buildShopHref } from "@/lib/shop-navigation";
 import { cn } from "@/lib/utils";
 import { useCart } from "./CartProvider";
 import { ThemePicker } from "./ThemePicker";
@@ -43,34 +38,13 @@ export function SiteHeader({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [q, setQ] = useState("");
-  const [activeCategory, setActiveCategory] = useState(
-    searchParams.get("category") || ""
-  );
+  const [q, setQ] = useState(searchParams.get("q") || "");
+  const activeCategory = searchParams.get("category") || "";
   const isShop = pathname === "/shop" || pathname.startsWith("/shop");
 
   useEffect(() => {
-    function handleFilterChange(event: Event) {
-      const detail = (event as CustomEvent<ShopFilterDetail>).detail;
-      if (detail.category !== undefined) {
-        setActiveCategory(detail.category === "all" ? "" : detail.category);
-      }
-      if (detail.query !== undefined) setQ(detail.query);
-    }
-
-    function handleHistoryChange() {
-      const params = new URLSearchParams(window.location.search);
-      setActiveCategory(params.get("category") || "");
-      setQ(params.get("q") || "");
-    }
-
-    window.addEventListener(SHOP_FILTER_EVENT, handleFilterChange);
-    window.addEventListener("popstate", handleHistoryChange);
-    return () => {
-      window.removeEventListener(SHOP_FILTER_EVENT, handleFilterChange);
-      window.removeEventListener("popstate", handleHistoryChange);
-    };
-  }, []);
+    setQ(searchParams.get("q") || "");
+  }, [searchParams]);
 
   const navItems: Array<{
     href: string;
@@ -91,11 +65,16 @@ export function SiteHeader({
     e.preventDefault();
     const query = q.trim();
     if (isShop) {
-      updateShopUrl({ query });
-      announceShopFilter({ query });
+      router.replace(
+        buildShopHref({
+          category: activeCategory || "all",
+          query,
+        }),
+        { scroll: false }
+      );
       return;
     }
-    router.push(query ? `/shop?q=${encodeURIComponent(query)}` : "/shop");
+    router.push(buildShopHref({ query }));
   }
 
   function handleCategoryClick(
@@ -105,10 +84,13 @@ export function SiteHeader({
     if (!isShop) return;
 
     event.preventDefault();
-    const category = slug || "all";
-    setActiveCategory(slug || "");
-    updateShopUrl({ category });
-    announceShopFilter({ category });
+    router.replace(
+      buildShopHref({
+        category: slug || "all",
+        query: q.trim(),
+      }),
+      { scroll: false }
+    );
   }
 
   function isActive(slug: string | null, childSlugs: string[] = []): boolean {

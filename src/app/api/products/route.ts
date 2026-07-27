@@ -9,8 +9,6 @@ import type { ProductCreateInput } from "@/lib/store";
 import { sanitizeImageList } from "@/lib/images";
 import { getLeafCategories } from "@/lib/types";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 export async function GET() {
   const [products, counts] = await Promise.all([listProducts(), getCounts()]);

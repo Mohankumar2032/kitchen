@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 import { getOrderById, updateOrderStatus } from "@/lib/store";
 import type { OrderStatus } from "@/lib/types";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 

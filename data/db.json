@@ -14,8 +14,8 @@
       "status": "active",
       "description": "Kitchen Storage Container Set of 16 | Plastic Airtight Food Storage Containers | Grocery Storage Jars for Kitchen | Multipurpose Organizer Boxes",
       "images": [
-        "/products/catalog/prod-1.png",
-        "/products/catalog/prod-1-2.png"
+        "/products/catalog/prod-1.webp",
+        "/products/catalog/prod-1-2.webp"
       ],
       "cost": 468,
       "sellPrice": 478,
@@ -37,8 +37,8 @@
       "status": "active",
       "description": "SPOONERY New Premium Green Stainless Steel Cookie Cutters – PACK OF 12 PIC, Assorted Shapes for All Your Baking Needs",
       "images": [
-        "/products/catalog/prod-2.png",
-        "/products/catalog/prod-2-2.png"
+        "/products/catalog/prod-2.webp",
+        "/products/catalog/prod-2-2.webp"
       ],
       "cost": 196,
       "sellPrice": 210,
@@ -60,8 +60,8 @@
       "status": "active",
       "description": "Fridge Storage Boxes (Pack of 6) Freezer & Refrigerator Organizer Containers Kitchen Storage Container Set Kitchen Accessories Items for Home 800 ml Food Storage Box, Plastic, White",
       "images": [
-        "/products/catalog/prod-3.png",
-        "/products/catalog/prod-3-2.png",
+        "/products/catalog/prod-3.webp",
+        "/products/catalog/prod-3-2.webp",
         "https://u4fmgydoouw7nafv.public.blob.vercel-storage.com/products/1785063920133-2a1b8949f40e.png"
       ],
       "cost": 149,
@@ -84,7 +84,7 @@
       "status": "active",
       "description": "12 Pcs 200 ml airtight plastic storage containers with maroon lids and measuring spoon. BPA free, food-grade jars for spices, snacks and kitchen organisation.",
       "images": [
-        "/products/catalog/prod-4.png"
+        "/products/catalog/prod-4.webp"
       ],
       "cost": 335,
       "sellPrice": 350,
@@ -106,7 +106,7 @@
       "status": "active",
       "description": "Sprout Maker Jar With Air Ventilation — Organic, Fresh Sprouted Grains Seeds, Ragi Beans Sprout Maker Jar For Living Healthy Life — 720 Ml, Transparent",
       "images": [
-        "/products/catalog/prod-5.png"
+        "/products/catalog/prod-5.webp"
       ],
       "cost": 141,
       "sellPrice": 151,
@@ -128,7 +128,7 @@
       "status": "active",
       "description": "12p 1100ml Airtight Square Shape Container | Kitchen Storage Container Set | Plastic Storage Jar | Jar for Kitchen Accessory Dabba | Box for Kitchen with Lid, 1100ml (Black, Pack of 6)",
       "images": [
-        "/products/catalog/prod-6.png"
+        "/products/catalog/prod-6.webp"
       ],
       "cost": 410,
       "sellPrice": 420,
@@ -150,7 +150,7 @@
       "status": "active",
       "description": "Dish Drying Mat Large – Water Absorbing Mat for Kitchen, Kitchen Drying Mat for Wet Utensils, Drying Mat for Kitchen Utensils (40 x 60 Cm)",
       "images": [
-        "/products/catalog/prod-7.png"
+        "/products/catalog/prod-7.webp"
       ],
       "cost": 161,
       "sellPrice": 171,
@@ -172,8 +172,8 @@
       "status": "active",
       "description": "Jainco Decor Premium Quilted Kitchen Apron Waterproof with PVC Backing | Thick Maroon Apron with Pocket for Women & Men",
       "images": [
-        "/products/catalog/prod-8.png",
-        "/products/catalog/prod-8-2.png"
+        "/products/catalog/prod-8.webp",
+        "/products/catalog/prod-8-2.webp"
       ],
       "cost": 179,
       "sellPrice": 189,
@@ -195,7 +195,7 @@
       "status": "active",
       "description": "Premium stainless steel coconut scraper plate (coconut rod) with wide catch plate and serrated blade for fresh grated coconut at home.",
       "images": [
-        "/products/catalog/prod-9.png"
+        "/products/catalog/prod-9.webp"
       ],
       "cost": 182,
       "sellPrice": 192,
@@ -217,8 +217,8 @@
       "status": "active",
       "description": "Premium Butter Paper Roll – 530 Meter Approx | Oil proof for kitchen use",
       "images": [
-        "/products/catalog/prod-10.png",
-        "/products/catalog/prod-10-2.png"
+        "/products/catalog/prod-10.webp",
+        "/products/catalog/prod-10-2.webp"
       ],
       "cost": 176,
       "sellPrice": 186,
