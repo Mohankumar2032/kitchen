@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { get, list, put } from "@vercel/blob";
+import { del, get, list, put } from "@vercel/blob";
 import { revalidatePath, revalidateTag } from "next/cache";
 import type {
   CategoryDef,
@@ -232,6 +232,15 @@ async function readProductBlob(id: string): Promise<Product | null> {
   if (!shouldUseBlobDb()) return null;
   const read = await readBlobJson<Product>(productBlobPath(id));
   return read?.value ?? null;
+}
+
+async function deleteProductBlob(id: string): Promise<void> {
+  if (!shouldUseBlobDb()) return;
+  try {
+    await del(productBlobPath(id), blobOpts());
+  } catch {
+    // Blob may already be gone; catalog removal is the source of truth.
+  }
 }
 
 /**
@@ -878,6 +887,24 @@ export async function updateProduct(
     await writeProductBlob(next);
     await writeCatalogDb(db);
     return next;
+  });
+}
+
+export async function deleteProduct(id: string): Promise<boolean> {
+  return withCatalogLock(async () => {
+    const db = await readDbFresh();
+    const index = db.products.findIndex((p) => p.id === id);
+    const hadBlob = Boolean(await readProductBlob(id));
+
+    if (index === -1 && !hadBlob) return false;
+
+    if (index !== -1) {
+      db.products.splice(index, 1);
+      await writeCatalogDb(db);
+    }
+
+    await deleteProductBlob(id);
+    return true;
   });
 }
 

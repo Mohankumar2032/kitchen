@@ -31,6 +31,11 @@ type Counts = {
 };
 
 type Draft = {
+  name: string;
+  category: string;
+  description: string;
+  platformName: string;
+  platformUrl: string;
   cost: string;
   sellPrice: string;
   platformPrice: string;
@@ -69,6 +74,11 @@ const EMPTY_NEW: NewProductForm = {
 
 function toDraft(p: Product): Draft {
   return {
+    name: p.name,
+    category: p.category,
+    description: p.description,
+    platformName: p.platformName,
+    platformUrl: p.platformUrl,
     cost: String(p.cost),
     sellPrice: String(p.sellPrice),
     platformPrice: String(p.platformPrice),
@@ -210,7 +220,24 @@ export function ProductTable({
     const draft = drafts[id];
     if (!draft) return;
 
+    const name = draft.name.trim();
+    if (!name) {
+      setMessage("Enter a product name.");
+      return;
+    }
+
+    const leaves = getLeafCategories(categories);
+    if (!leaves.some((leaf) => leaf.slug === draft.category)) {
+      setMessage("Pick a subcategory for the product.");
+      return;
+    }
+
     const body = {
+      name,
+      category: draft.category,
+      description: draft.description.trim(),
+      platformName: draft.platformName.trim() || "Meesho",
+      platformUrl: draft.platformUrl.trim(),
       cost: Number(draft.cost) || 0,
       sellPrice: Number(draft.sellPrice) || 0,
       platformPrice: Number(draft.platformPrice) || 0,
@@ -242,6 +269,43 @@ export function ProductTable({
       );
       setDrafts((prev) => ({ ...prev, [id]: toDraft(data.product) }));
       setMessage("Saved.");
+      router.refresh();
+    });
+  }
+
+  function removeProduct(id: string, name: string) {
+    if (
+      !window.confirm(
+        `Delete "${name}"? This removes it from the shop and cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    startTransition(async () => {
+      setMessage(null);
+      const res = await fetch(`/api/products/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = (await res.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        setMessage(err?.error || "Delete failed. Try again.");
+        return;
+      }
+
+      setProducts((prev) => {
+        const next = prev.filter((p) => p.id !== id);
+        refreshCounts(next);
+        return next;
+      });
+      setDrafts((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      if (editingId === id) setEditingId(null);
+      setMessage("Product deleted.");
+      router.refresh();
     });
   }
 
@@ -381,7 +445,11 @@ export function ProductTable({
 
         const category = data.category;
         setCategories((current) => data.categories ?? [...current, category]);
-        setNewForm((form) => ({ ...form, category: category.slug }));
+        if (showAdd) {
+          setNewForm((form) => ({ ...form, category: category.slug }));
+        } else if (editingId) {
+          updateDraft(editingId, "category", category.slug);
+        }
         setNewCategoryName("");
         setIsAddingCategory(false);
         setMessage(`Category "${category.label}" selected.`);
@@ -389,6 +457,111 @@ export function ProductTable({
         setCategoryError("Could not add category. Check your connection.");
       }
     });
+  }
+
+  function categorySelect(value: string, onPick: (slug: string) => void) {
+    if (value === "__add_custom__") {
+      setIsAddingCategory(true);
+      setCategoryError(null);
+      return;
+    }
+    onPick(value);
+  }
+
+  function categoryOptions() {
+    return (
+      <>
+        {parentCategories.map((parent) => {
+          const children = getChildCategories(parent.slug, categories);
+          if (children.length === 0) {
+            return (
+              <option key={parent.slug} value={parent.slug}>
+                {parent.label}
+              </option>
+            );
+          }
+          return (
+            <optgroup key={parent.slug} label={parent.label}>
+              {children.map((child) => (
+                <option key={child.slug} value={child.slug}>
+                  {child.label}
+                </option>
+              ))}
+            </optgroup>
+          );
+        })}
+        <option value="packs">Combo Packs</option>
+        <option value="__add_custom__">+ Add custom subcategory</option>
+      </>
+    );
+  }
+
+  function categoryCreator() {
+    if (!isAddingCategory) return null;
+    return (
+      <div className="rounded-[6px] border border-border bg-surface/40 p-3 sm:col-span-2 lg:col-span-3">
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_auto] sm:items-end">
+          <Field label="Parent category">
+            <select
+              className="input"
+              value={newCategoryParent}
+              onChange={(e) => setNewCategoryParent(e.target.value)}
+            >
+              {parentCategories.map((parent) => (
+                <option key={parent.slug} value={parent.slug}>
+                  {parent.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="New subcategory name">
+            <input
+              className="input"
+              value={newCategoryName}
+              onChange={(e) => {
+                setNewCategoryName(e.target.value);
+                setCategoryError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  createCategory();
+                }
+              }}
+              placeholder="For example, Serving Trays"
+              maxLength={60}
+              autoFocus
+            />
+          </Field>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="btn btn-ghost min-h-10 flex-1 sm:flex-none"
+              onClick={() => {
+                setIsAddingCategory(false);
+                setNewCategoryName("");
+                setCategoryError(null);
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary min-h-10 flex-1 sm:flex-none"
+              disabled={pending}
+              onClick={createCategory}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+        {categoryError ? (
+          <p className="mt-2 text-[12px] text-[var(--danger)]" role="alert">
+            {categoryError}
+          </p>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -456,7 +629,7 @@ export function ProductTable({
         <p
           className={cn(
             "text-[13px]",
-            /fail|Could|Enter/i.test(message)
+            /fail|Could|Enter|Pick|required|Delete failed/i.test(message)
               ? "text-[var(--danger)]"
               : "text-success"
           )}
@@ -494,108 +667,16 @@ export function ProductTable({
               <select
                 className="input"
                 value={newForm.category}
-                onChange={(e) => {
-                  if (e.target.value === "__add_custom__") {
-                    setIsAddingCategory(true);
-                    setCategoryError(null);
-                    return;
-                  }
-                  setNewForm((form) => ({
-                    ...form,
-                    category: e.target.value,
-                  }));
-                }}
+                onChange={(e) =>
+                  categorySelect(e.target.value, (slug) =>
+                    setNewForm((form) => ({ ...form, category: slug }))
+                  )
+                }
               >
-                {parentCategories.map((parent) => {
-                  const children = getChildCategories(parent.slug, categories);
-                  if (children.length === 0) {
-                    return (
-                      <option key={parent.slug} value={parent.slug}>
-                        {parent.label}
-                      </option>
-                    );
-                  }
-                  return (
-                    <optgroup key={parent.slug} label={parent.label}>
-                      {children.map((child) => (
-                        <option key={child.slug} value={child.slug}>
-                          {child.label}
-                        </option>
-                      ))}
-                    </optgroup>
-                  );
-                })}
-                <option value="packs">Combo Packs</option>
-                <option value="__add_custom__">+ Add custom subcategory</option>
+                {categoryOptions()}
               </select>
             </Field>
-            {isAddingCategory ? (
-              <div className="rounded-[6px] border border-border bg-surface/40 p-3 sm:col-span-2 lg:col-span-3">
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)_auto] sm:items-end">
-                  <Field label="Parent category">
-                    <select
-                      className="input"
-                      value={newCategoryParent}
-                      onChange={(e) => setNewCategoryParent(e.target.value)}
-                    >
-                      {parentCategories.map((parent) => (
-                        <option key={parent.slug} value={parent.slug}>
-                          {parent.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="New subcategory name">
-                    <input
-                      className="input"
-                      value={newCategoryName}
-                      onChange={(e) => {
-                        setNewCategoryName(e.target.value);
-                        setCategoryError(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          createCategory();
-                        }
-                      }}
-                      placeholder="For example, Serving Trays"
-                      maxLength={60}
-                      autoFocus
-                    />
-                  </Field>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className="btn btn-ghost min-h-10 flex-1 sm:flex-none"
-                      onClick={() => {
-                        setIsAddingCategory(false);
-                        setNewCategoryName("");
-                        setCategoryError(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary min-h-10 flex-1 sm:flex-none"
-                      disabled={pending}
-                      onClick={createCategory}
-                    >
-                      Add
-                    </button>
-                  </div>
-                </div>
-                {categoryError ? (
-                  <p
-                    className="mt-2 text-[12px] text-[var(--danger)]"
-                    role="alert"
-                  >
-                    {categoryError}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
+            {categoryCreator()}
             <Field label="Type">
               <select
                 className="input"
@@ -742,14 +823,14 @@ export function ProductTable({
                   </div>
                   <div className="min-w-0 flex-1">
                     <h2 className="truncate text-[14px] font-semibold text-foreground sm:text-[15px]">
-                      {product.name}
+                      {draft.name || product.name}
                     </h2>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
                       <span className="rounded-[4px] bg-surface px-1.5 py-0.5 capitalize">
                         {product.type}
                       </span>
                       <span className="rounded-[4px] bg-surface px-1.5 py-0.5">
-                        {categoryPathLabel(product.category, categories)}
+                        {categoryPathLabel(draft.category || product.category, categories)}
                       </span>
                       <span
                         className={cn(
@@ -806,11 +887,14 @@ export function ProductTable({
                       "btn min-h-10 flex-1 px-4 sm:flex-none",
                       open ? "btn-ghost" : "btn-primary"
                     )}
-                    onClick={() =>
+                    onClick={() => {
                       setEditingId((cur) =>
                         cur === product.id ? null : product.id
-                      )
-                    }
+                      );
+                      setIsAddingCategory(false);
+                      setCategoryError(null);
+                      setMessage(null);
+                    }}
                   >
                     <i
                       className={cn(
@@ -827,6 +911,99 @@ export function ProductTable({
               {/* Full-width editor */}
               {open ? (
                 <div className="border-t border-border bg-[color-mix(in_srgb,var(--surface)_65%,#fff)] p-3 sm:p-5">
+                  <div className="mb-5 rounded-[6px] border border-border bg-white p-3 sm:p-4">
+                    <div className="mb-3">
+                      <p className="text-[13px] font-semibold text-foreground">
+                        Details
+                      </p>
+                      <p className="text-[12px] text-muted">
+                        Name, category, description, and fulfill link
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Field label="Name *" className="sm:col-span-2">
+                        <input
+                          className="input"
+                          value={draft.name}
+                          onChange={(e) =>
+                            updateDraft(product.id, "name", e.target.value)
+                          }
+                          placeholder="Product name"
+                        />
+                      </Field>
+                      <Field label="Category *">
+                        <select
+                          className="input"
+                          value={draft.category}
+                          onChange={(e) =>
+                            categorySelect(e.target.value, (slug) =>
+                              updateDraft(product.id, "category", slug)
+                            )
+                          }
+                        >
+                          {categoryOptions()}
+                        </select>
+                      </Field>
+                      <Field label="Source name">
+                        <input
+                          className="input"
+                          value={draft.platformName}
+                          onChange={(e) =>
+                            updateDraft(
+                              product.id,
+                              "platformName",
+                              e.target.value
+                            )
+                          }
+                          placeholder="Meesho"
+                        />
+                      </Field>
+                      {categoryCreator()}
+                      <Field label="Fulfill URL" className="sm:col-span-2">
+                        <input
+                          className="input"
+                          value={draft.platformUrl}
+                          onChange={(e) =>
+                            updateDraft(
+                              product.id,
+                              "platformUrl",
+                              e.target.value
+                            )
+                          }
+                          placeholder="https://www.meesho.com/..."
+                        />
+                      </Field>
+                      <Field label="Description" className="sm:col-span-2">
+                        <textarea
+                          className="input min-h-[88px] resize-y"
+                          value={draft.description}
+                          onChange={(e) =>
+                            updateDraft(
+                              product.id,
+                              "description",
+                              e.target.value
+                            )
+                          }
+                          placeholder="Product description for the shop"
+                        />
+                      </Field>
+                    </div>
+                    {draft.platformUrl.trim() ? (
+                      <a
+                        href={draft.platformUrl.trim()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-medium text-theme"
+                      >
+                        Open fulfill link
+                        <i
+                          className="fa-solid fa-arrow-up-right-from-square text-[10px]"
+                          aria-hidden
+                        />
+                      </a>
+                    ) : null}
+                  </div>
+
                   <div className="grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
                     <section className="rounded-[6px] border border-border bg-white p-3 sm:p-4">
                       <ImageGalleryEditor
@@ -936,38 +1113,43 @@ export function ProductTable({
                         {effectiveCommission(product, settings)}%
                       </p>
 
-                      {product.platformUrl ? (
-                        <a
-                          href={product.platformUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1.5 text-[12px] font-medium text-theme"
-                        >
-                          Fulfill via {product.platformName || "source"}
-                          <i
-                            className="fa-solid fa-arrow-up-right-from-square text-[10px]"
-                            aria-hidden
-                          />
-                        </a>
-                      ) : null}
-
-                      <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
+                      <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
                         <button
                           type="button"
-                          className="btn btn-ghost min-h-10"
-                          onClick={() => setEditingId(null)}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-primary min-h-10"
+                          className="btn btn-ghost min-h-10 text-[var(--danger)] hover:bg-[color-mix(in_srgb,var(--danger)_10%,#fff)]"
                           disabled={pending}
-                          onClick={() => saveRow(product.id)}
+                          onClick={() =>
+                            removeProduct(product.id, draft.name || product.name)
+                          }
                         >
-                          <i className="fa-solid fa-check" aria-hidden />
-                          Save changes
+                          <i className="fa-solid fa-trash" aria-hidden />
+                          Delete product
                         </button>
+                        <div className="flex flex-col-reverse gap-2 sm:flex-row">
+                          <button
+                            type="button"
+                            className="btn btn-ghost min-h-10"
+                            onClick={() => {
+                              setDrafts((prev) => ({
+                                ...prev,
+                                [product.id]: toDraft(product),
+                              }));
+                              setEditingId(null);
+                              setIsAddingCategory(false);
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-primary min-h-10"
+                            disabled={pending}
+                            onClick={() => saveRow(product.id)}
+                          >
+                            <i className="fa-solid fa-check" aria-hidden />
+                            Save changes
+                          </button>
+                        </div>
                       </div>
                     </section>
                   </div>

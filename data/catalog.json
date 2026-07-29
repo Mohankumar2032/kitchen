@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 11,
   "settings": {
     "defaultCommissionPercent": 10,
     "storeName": "Kitchen",
@@ -71,18 +71,17 @@
       "description": "Fridge Storage Boxes (Pack of 6) Freezer & Refrigerator Organizer Containers Kitchen Storage Container Set Kitchen Accessories Items for Home 800 ml Food Storage Box, Plastic, White",
       "images": [
         "/products/catalog/prod-3.webp",
-        "/products/catalog/prod-3-2.webp",
-        "https://u4fmgydoouw7nafv.public.blob.vercel-storage.com/products/1785063920133-2a1b8949f40e.png"
+        "/products/catalog/prod-3-2.webp"
       ],
       "cost": 149,
-      "sellPrice": 2000,
+      "sellPrice": 159,
       "platformPrice": 149,
       "platformName": "Meesho",
       "platformUrl": "https://www.meesho.com/s/p/90174u?utm_source=s_w",
       "stock": 35,
       "commissionPercent": null,
       "createdAt": "2026-07-26T00:00:00.000Z",
-      "updatedAt": "2026-07-26T11:05:33.586Z",
+      "updatedAt": "2026-07-29T09:00:57.838Z",
       "mrp": 249
     },
     {
