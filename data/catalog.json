@@ -1,9 +1,14 @@
 {
-  "version": 11,
+  "version": 16,
   "settings": {
     "defaultCommissionPercent": 10,
     "storeName": "Kitchen",
-    "currency": "INR"
+    "currency": "INR",
+    "shippingFee": 250,
+    "freeShippingAbove": 999,
+    "upiId": "jananilakshmi201@oksbi",
+    "upiMobile": "6369983862",
+    "upiPayee": "Janani Jaishankar"
   },
   "categories": [
     {
@@ -32,10 +37,10 @@
       "platformPrice": 468,
       "platformName": "Meesho",
       "platformUrl": "https://www.meesho.com/s/p/fuij6i?utm_source=s_w",
-      "stock": 25,
+      "stock": 20,
       "commissionPercent": null,
       "createdAt": "2026-07-26T00:00:00.000Z",
-      "updatedAt": "2026-07-26T07:00:00.000Z",
+      "updatedAt": "2026-07-31T06:29:02.880Z",
       "mrp": 599
     },
     {
@@ -55,10 +60,10 @@
       "platformPrice": 196,
       "platformName": "Meesho",
       "platformUrl": "https://www.meesho.com/s/p/6wemfc?utm_source=s_w",
-      "stock": 30,
+      "stock": 29,
       "commissionPercent": null,
       "createdAt": "2026-07-26T00:00:00.000Z",
-      "updatedAt": "2026-07-26T07:00:00.000Z",
+      "updatedAt": "2026-07-31T06:25:09.687Z",
       "mrp": 299
     },
     {
@@ -78,10 +83,10 @@
       "platformPrice": 149,
       "platformName": "Meesho",
       "platformUrl": "https://www.meesho.com/s/p/90174u?utm_source=s_w",
-      "stock": 35,
+      "stock": 27,
       "commissionPercent": null,
       "createdAt": "2026-07-26T00:00:00.000Z",
-      "updatedAt": "2026-07-29T09:00:57.838Z",
+      "updatedAt": "2026-07-31T06:30:47.898Z",
       "mrp": 249
     },
     {

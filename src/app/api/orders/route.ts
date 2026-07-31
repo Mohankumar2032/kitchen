@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createOrder, listOrders } from "@/lib/store";
 import type { CheckoutPayload } from "@/lib/types";
-
+import { isValidUtr, toPublicOrder } from "@/lib/types";
 
 export async function GET() {
   const orders = await listOrders();
@@ -29,16 +29,18 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
+    if (!isValidUtr(body.utr || "")) {
+      return NextResponse.json(
+        {
+          error:
+            "Pay via UPI and enter UTR (8–22 letters/numbers) before placing the order",
+        },
+        { status: 400 }
+      );
+    }
 
     const order = await createOrder(body);
-
-    // Customer response: strip source platform fields
-    const safeOrder = {
-      ...order,
-      items: order.items.map(({ platformName, platformUrl, ...item }) => item),
-    };
-
-    return NextResponse.json({ order: safeOrder }, { status: 201 });
+    return NextResponse.json({ order: toPublicOrder(order) }, { status: 201 });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Order failed";
     return NextResponse.json({ error: message }, { status: 400 });

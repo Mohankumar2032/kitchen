@@ -7,6 +7,8 @@ export type OrderStatus =
   | "shipped"
   | "cancelled";
 
+export type PaymentStatus = "unpaid" | "submitted" | "verified";
+
 export interface ImageVariants {
   thumb: string;
   card: string;
@@ -67,6 +69,31 @@ export interface Settings {
   defaultCommissionPercent: number;
   storeName: string;
   currency: string;
+  shippingFee: number;
+  freeShippingAbove: number;
+  upiId: string;
+  upiMobile: string;
+  upiPayee: string;
+}
+
+export const DEFAULT_SETTINGS: Settings = {
+  defaultCommissionPercent: 10,
+  storeName: "Kitchen",
+  currency: "INR",
+  shippingFee: 250,
+  freeShippingAbove: 999,
+  upiId: "jananilakshmi201@oksbi",
+  upiMobile: "6369983862",
+  upiPayee: "Janani Jaishankar",
+};
+
+export function computeShipping(
+  subtotal: number,
+  settings: Pick<Settings, "shippingFee" | "freeShippingAbove">
+): number {
+  if (subtotal <= 0) return 0;
+  if (subtotal >= settings.freeShippingAbove) return 0;
+  return Math.max(0, Number(settings.shippingFee) || 0);
 }
 
 export interface Enquiry {
@@ -84,15 +111,31 @@ export interface OrderItem {
   productName: string;
   qty: number;
   sellPrice: number;
+  /** Unit cost at order time (admin only — never shown to customer) */
+  cost?: number;
   /** Admin fulfillment helpers — never shown to customer */
   platformName?: string;
   platformUrl?: string;
+}
+
+/** Product margin for an order line: (sell − cost) × qty. */
+export function orderItemProfit(item: OrderItem): number {
+  const cost = Number(item.cost) || 0;
+  return calcProfit(cost, item.sellPrice) * item.qty;
+}
+
+/** Sum of item profits (shipping not included). */
+export function orderProfit(order: Pick<Order, "items">): number {
+  const total = order.items.reduce((sum, item) => sum + orderItemProfit(item), 0);
+  return Math.round(total * 100) / 100;
 }
 
 export interface Order {
   id: string;
   items: OrderItem[];
   subtotal: number;
+  shipping: number;
+  total: number;
   customerName: string;
   customerPhone: string;
   customerEmail: string;
@@ -103,7 +146,72 @@ export interface Order {
   pincode: string;
   notes: string;
   status: OrderStatus;
+  paymentStatus: PaymentStatus;
+  utr: string | null;
+  utrSubmittedAt: string | null;
   createdAt: string;
+}
+
+/** Customer-safe order (no source fulfill links). Cost kept for admin UIs. */
+export type PublicOrder = Omit<Order, "items"> & {
+  items: Array<Omit<OrderItem, "platformName" | "platformUrl">>;
+};
+
+export function toPublicOrder(order: Order): PublicOrder {
+  return {
+    ...order,
+    items: order.items.map(
+      ({ platformName: _pn, platformUrl: _pu, ...item }) => item
+    ),
+  };
+}
+
+/** Fill missing/zero line costs from the live product catalog. */
+export function enrichOrderItemCosts(
+  orders: Order[],
+  costByProductId: Map<string, number>
+): Order[] {
+  return orders.map((order) => ({
+    ...order,
+    items: order.items.map((item) => {
+      const fromCatalog = costByProductId.get(item.productId);
+      const saved = Number(item.cost);
+      const cost =
+        Number.isFinite(saved) && saved > 0
+          ? saved
+          : fromCatalog != null && fromCatalog > 0
+            ? fromCatalog
+            : Number.isFinite(saved)
+              ? saved
+              : 0;
+      return { ...item, cost };
+    }),
+  }));
+}
+
+export function normalizeUtr(raw: string): string {
+  return raw.replace(/\s+/g, "").toUpperCase();
+}
+
+export function isValidUtr(raw: string): boolean {
+  const utr = normalizeUtr(raw);
+  return /^[A-Z0-9]{8,22}$/.test(utr);
+}
+
+export function buildUpiPayUrl(detail: {
+  upiId: string;
+  payee: string;
+  amount: number;
+  note: string;
+}): string {
+  const params = new URLSearchParams({
+    pa: detail.upiId,
+    pn: detail.payee,
+    am: detail.amount.toFixed(2),
+    cu: "INR",
+    tn: detail.note.slice(0, 50),
+  });
+  return `upi://pay?${params.toString()}`;
 }
 
 export interface CheckoutPayload {
@@ -116,6 +224,8 @@ export interface CheckoutPayload {
   state: string;
   pincode: string;
   notes?: string;
+  /** Required — order is placed only after customer pays and enters UTR. */
+  utr: string;
   items: Array<{ productId: string; qty: number }>;
 }
 

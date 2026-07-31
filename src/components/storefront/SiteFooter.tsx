@@ -77,7 +77,7 @@ export function SiteFooter({
                   className="fa-solid fa-money-bill-wave mt-0.5 w-3 text-theme"
                   aria-hidden
                 />
-                Cash on delivery
+                UPI payment · Track by order ID
               </li>
               <li className="flex items-start gap-2">
                 <i

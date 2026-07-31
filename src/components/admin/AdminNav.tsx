@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useTransition } from "react";
 import { ThemePicker } from "@/components/storefront/ThemePicker";
 import { cn } from "@/lib/utils";
 
 type Counts = {
   products: number;
-  ordersNew: number;
+  orders: number;
+  ordersNeedsVerify: number;
   enquiriesNew: number;
 };
 
@@ -35,12 +37,22 @@ const tabs = [
 
 export function AdminNav({ counts }: { counts: Counts }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  function logout() {
+    startTransition(async () => {
+      await fetch("/api/admin/logout", { method: "POST" });
+      router.replace("/admin/login");
+      router.refresh();
+    });
+  }
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center gap-2 px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3">
         <Link
-          href="/"
+          href="/admin/orders"
           className="flex min-w-0 shrink-0 items-center gap-2 font-semibold text-foreground"
         >
           <i className="fa-solid fa-kitchen-set text-theme" aria-hidden />
@@ -59,6 +71,18 @@ export function AdminNav({ counts }: { counts: Counts }) {
             <i className="fa-solid fa-store" aria-hidden />
             <span className="hidden lg:inline">Store</span>
           </Link>
+          <button
+            type="button"
+            className="btn btn-ghost h-9 px-2.5"
+            onClick={logout}
+            disabled={pending}
+            title="Log out"
+          >
+            <i className="fa-solid fa-right-from-bracket" aria-hidden />
+            <span className="hidden sm:inline">
+              {pending ? "…" : "Logout"}
+            </span>
+          </button>
         </div>
       </div>
 
@@ -68,7 +92,7 @@ export function AdminNav({ counts }: { counts: Counts }) {
             const active = pathname.startsWith(tab.href);
             const badge =
               tab.key === "orders"
-                ? counts.ordersNew
+                ? counts.orders
                 : tab.key === "products"
                   ? counts.products
                   : tab.key === "enquiries"
@@ -92,8 +116,17 @@ export function AdminNav({ counts }: { counts: Counts }) {
                   <span
                     className={cn(
                       "rounded-[4px] px-1.5 py-0.5 text-[11px] font-semibold",
-                      active ? "bg-white/20 text-white" : "bg-surface text-muted"
+                      active
+                        ? "bg-white/20 text-white"
+                        : tab.key === "orders" && counts.ordersNeedsVerify > 0
+                          ? "bg-[#ffedd5] text-[#c2410c]"
+                          : "bg-surface text-muted"
                     )}
+                    title={
+                      tab.key === "orders" && counts.ordersNeedsVerify > 0
+                        ? `${counts.ordersNeedsVerify} awaiting UTR verify`
+                        : undefined
+                    }
                   >
                     {badge}
                   </span>

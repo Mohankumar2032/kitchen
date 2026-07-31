@@ -8,17 +8,23 @@ import type {
   Database,
   Order,
   OrderStatus,
+  PaymentStatus,
   Product,
   ProductUpdate,
   Settings,
 } from "./types";
 import {
   CATEGORY_META,
+  DEFAULT_SETTINGS,
   allCategoryDefs,
   categoryLabel,
+  computeShipping,
+  enrichOrderItemCosts,
   getChildCategories,
   getLeafCategories,
   getParentCategories,
+  isValidUtr,
+  normalizeUtr,
   resolveCategorySlug,
   slugifyCategory,
 } from "./types";
@@ -130,13 +136,51 @@ function blobOpts() {
 function emptyCatalog(): CatalogStore {
   return {
     version: 1,
-    settings: {
-      defaultCommissionPercent: 10,
-      storeName: "Kitchen",
-      currency: "INR",
-    },
+    settings: { ...DEFAULT_SETTINGS },
     categories: [],
     products: [],
+  };
+}
+
+function normalizeSettings(settings: Partial<Settings> | null | undefined): Settings {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...(settings ?? {}),
+    shippingFee:
+      typeof settings?.shippingFee === "number"
+        ? Math.max(0, settings.shippingFee)
+        : DEFAULT_SETTINGS.shippingFee,
+    freeShippingAbove:
+      typeof settings?.freeShippingAbove === "number"
+        ? Math.max(0, settings.freeShippingAbove)
+        : DEFAULT_SETTINGS.freeShippingAbove,
+    upiId: (settings?.upiId || DEFAULT_SETTINGS.upiId).trim(),
+    upiMobile: (settings?.upiMobile || DEFAULT_SETTINGS.upiMobile).trim(),
+    upiPayee: (settings?.upiPayee || DEFAULT_SETTINGS.upiPayee).trim(),
+  };
+}
+
+function normalizeOrder(order: Order): Order {
+  const subtotal = Number(order.subtotal) || 0;
+  const shipping =
+    typeof order.shipping === "number"
+      ? Math.max(0, order.shipping)
+      : computeShipping(subtotal, DEFAULT_SETTINGS);
+  const total =
+    typeof order.total === "number" ? Math.max(0, order.total) : subtotal + shipping;
+  const paymentStatus: PaymentStatus =
+    order.paymentStatus === "submitted" || order.paymentStatus === "verified"
+      ? order.paymentStatus
+      : "unpaid";
+
+  return {
+    ...order,
+    subtotal,
+    shipping,
+    total,
+    paymentStatus,
+    utr: order.utr ? normalizeUtr(order.utr) : null,
+    utrSubmittedAt: order.utrSubmittedAt ?? null,
   };
 }
 
@@ -403,6 +447,8 @@ function normalizeDb(db: Database): Database {
   if (typeof db.version !== "number") db.version = 1;
   if (typeof db.ordersVersion !== "number") db.ordersVersion = 1;
 
+  db.settings = normalizeSettings(db.settings);
+
   db.categories = db.categories.map((category) => ({
     ...category,
     slug: resolveCategorySlug(category.slug),
@@ -414,6 +460,8 @@ function normalizeDb(db: Database): Database {
     category: resolveCategorySlug(product.category),
     images: (product.images || []).map(normalizeCatalogImagePath),
   }));
+
+  db.orders = db.orders.map((order) => normalizeOrder(order));
 
   return db;
 }
@@ -910,14 +958,23 @@ export async function deleteProduct(id: string): Promise<boolean> {
 
 export async function listOrders(): Promise<Order[]> {
   const db = await readDb();
-  return [...db.orders].sort(
+  const costByProductId = new Map(
+    db.products.map((p) => [p.id, Number(p.cost) || 0])
+  );
+  const orders = enrichOrderItemCosts(db.orders, costByProductId);
+  return [...orders].sort(
     (a, b) => +new Date(b.createdAt) - +new Date(a.createdAt)
   );
 }
 
 export async function getOrderById(id: string): Promise<Order | null> {
   const db = await readDb();
-  return db.orders.find((o) => o.id === id) ?? null;
+  const order = db.orders.find((o) => o.id === id);
+  if (!order) return null;
+  const costByProductId = new Map(
+    db.products.map((p) => [p.id, Number(p.cost) || 0])
+  );
+  return enrichOrderItemCosts([order], costByProductId)[0] ?? null;
 }
 
 export async function createOrder(payload: CheckoutPayload): Promise<Order> {
@@ -953,6 +1010,7 @@ export async function createOrder(payload: CheckoutPayload): Promise<Order> {
       productName: product.name,
       qty,
       sellPrice: product.sellPrice,
+      cost: Number(product.cost) || 0,
       platformName: product.platformName,
       platformUrl: product.platformUrl,
     }));
@@ -961,11 +1019,22 @@ export async function createOrder(payload: CheckoutPayload): Promise<Order> {
       (sum, item) => sum + item.sellPrice * item.qty,
       0
     );
+    const settings = normalizeSettings(db.settings);
+    const shipping = computeShipping(subtotal, settings);
+    const total = subtotal + shipping;
+
+    if (!isValidUtr(payload.utr || "")) {
+      throw new Error("Pay via UPI and enter a valid UTR before placing the order");
+    }
+    const utr = normalizeUtr(payload.utr);
+    const createdAt = new Date().toISOString();
 
     const order: Order = {
       id: `ord-${Date.now().toString(36)}`,
       items: orderItems,
       subtotal,
+      shipping,
+      total,
       customerName: payload.customerName.trim(),
       customerPhone: payload.customerPhone.trim(),
       customerEmail: (payload.customerEmail || "").trim(),
@@ -976,7 +1045,10 @@ export async function createOrder(payload: CheckoutPayload): Promise<Order> {
       pincode: payload.pincode.trim(),
       notes: (payload.notes || "").trim(),
       status: "new",
-      createdAt: new Date().toISOString(),
+      paymentStatus: "submitted",
+      utr,
+      utrSubmittedAt: createdAt,
+      createdAt,
     };
 
     db.orders.unshift(order);
@@ -1002,10 +1074,50 @@ export async function updateOrderStatus(
   id: string,
   status: OrderStatus
 ): Promise<Order | null> {
+  return updateOrder(id, { status });
+}
+
+export async function updateOrder(
+  id: string,
+  patch: {
+    status?: OrderStatus;
+    paymentStatus?: PaymentStatus;
+    utr?: string | null;
+  }
+): Promise<Order | null> {
   const db = await readDb();
   const index = db.orders.findIndex((o) => o.id === id);
   if (index === -1) return null;
-  db.orders[index] = { ...db.orders[index], status };
+
+  const current = normalizeOrder(db.orders[index]);
+  const next: Order = { ...current };
+
+  if (patch.status) next.status = patch.status;
+
+  if (patch.paymentStatus) {
+    next.paymentStatus = patch.paymentStatus;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, "utr")) {
+    if (current.paymentStatus === "verified") {
+      throw new Error("Payment already verified; UTR cannot be changed");
+    }
+    const raw = (patch.utr || "").trim();
+    if (!raw) {
+      next.utr = null;
+      next.utrSubmittedAt = null;
+      next.paymentStatus = "unpaid";
+    } else {
+      if (!isValidUtr(raw)) {
+        throw new Error("UTR must be 8–22 letters/numbers (no spaces)");
+      }
+      next.utr = normalizeUtr(raw);
+      next.utrSubmittedAt = new Date().toISOString();
+      if (next.paymentStatus === "unpaid") next.paymentStatus = "submitted";
+    }
+  }
+
+  db.orders[index] = next;
   await writeOrdersDb(db);
   return db.orders[index];
 }
@@ -1016,7 +1128,11 @@ export async function getCounts() {
     products: db.products.length,
     packs: db.products.filter((p) => p.type === "pack").length,
     onlyProducts: db.products.filter((p) => p.type === "product").length,
+    orders: db.orders.length,
     ordersNew: db.orders.filter((o) => o.status === "new").length,
+    ordersNeedsVerify: db.orders.filter(
+      (o) => (o.paymentStatus || "unpaid") === "submitted"
+    ).length,
     enquiriesNew: db.enquiries.filter((e) => e.status === "new").length,
   };
 }

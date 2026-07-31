@@ -28,6 +28,9 @@
 /public/uploads/*
 !/public/uploads/.gitkeep
 
+# admin Microsoft Authenticator secret (local)
+/data/admin-totp.json
+
 # debug
 npm-debug.log*
 yarn-debug.log*

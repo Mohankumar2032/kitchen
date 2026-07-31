@@ -7,11 +7,21 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { parseAsString, useQueryState } from "nuqs";
 import { buildShopHref } from "@/lib/shop-navigation";
 import { cn } from "@/lib/utils";
 import { useCart } from "./CartProvider";
 import { ThemePicker } from "./ThemePicker";
+
+const shopCategoryParser = parseAsString.withOptions({
+  history: "replace",
+  scroll: false,
+});
+const shopQueryParser = parseAsString.withOptions({
+  history: "replace",
+  scroll: false,
+});
 
 export interface NavCategory {
   slug: string;
@@ -37,14 +47,19 @@ export function SiteHeader({
   const { count, ready } = useCart();
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const [q, setQ] = useState(searchParams.get("q") || "");
-  const activeCategory = searchParams.get("category") || "";
   const isShop = pathname === "/shop" || pathname.startsWith("/shop");
+  // Share shop filter state with ShopBrowser via nuqs (not a separate router.replace).
+  const [categoryParam, setCategoryParam] = useQueryState(
+    "category",
+    shopCategoryParser
+  );
+  const [queryParam, setQueryParam] = useQueryState("q", shopQueryParser);
+  const activeCategory = categoryParam || "";
+  const [q, setQ] = useState(queryParam || "");
 
   useEffect(() => {
-    setQ(searchParams.get("q") || "");
-  }, [searchParams]);
+    setQ(queryParam || "");
+  }, [queryParam]);
 
   const navItems: Array<{
     href: string;
@@ -65,13 +80,7 @@ export function SiteHeader({
     e.preventDefault();
     const query = q.trim();
     if (isShop) {
-      router.replace(
-        buildShopHref({
-          category: activeCategory || "all",
-          query,
-        }),
-        { scroll: false }
-      );
+      void setQueryParam(query || null);
       return;
     }
     router.push(buildShopHref({ query }));
@@ -83,14 +92,9 @@ export function SiteHeader({
   ) {
     if (!isShop) return;
 
+    // Keep ShopBrowser in sync: update the shared nuqs category (clears stale subcategory).
     event.preventDefault();
-    router.replace(
-      buildShopHref({
-        category: slug || "all",
-        query: q.trim(),
-      }),
-      { scroll: false }
-    );
+    void setCategoryParam(slug);
   }
 
   function isActive(slug: string | null, childSlugs: string[] = []): boolean {
@@ -149,6 +153,14 @@ export function SiteHeader({
 
           <div className="ml-auto flex items-center gap-2">
             <ThemePicker />
+            <Link
+              href="/track"
+              className="inline-flex h-10 items-center gap-1.5 rounded-full border border-theme bg-white px-3 text-[12px] font-semibold text-theme hover:bg-[var(--hover-tint)]"
+            >
+              <i className="fa-solid fa-location-crosshairs" aria-hidden />
+              <span className="hidden sm:inline">Track order</span>
+              <span className="sm:hidden">Track</span>
+            </Link>
             <Link
               href="/shop"
               className="btn btn-soft hidden h-10 px-3 lg:inline-flex"

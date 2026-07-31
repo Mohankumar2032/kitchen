@@ -43,7 +43,7 @@ export default async function HomePage() {
               </Link>
             </div>
             <p className="mt-2.5 text-[12px] text-muted">
-              COD available · Pan-India delivery · Secure checkout
+              UPI payment · Pan-India delivery · Secure checkout
             </p>
           </div>
 

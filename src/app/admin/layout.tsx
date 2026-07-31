@@ -1,11 +1,18 @@
 import { Suspense } from "react";
+import { headers } from "next/headers";
 import { connection } from "next/server";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { getCounts } from "@/lib/store";
 
 async function AdminShell({ children }: { children: React.ReactNode }) {
-  // Admin must always read the live catalog/orders (not a prerendered shell).
   await connection();
+  const headerList = await headers();
+  const isLogin = headerList.get("x-admin-login") === "1";
+
+  if (isLogin) {
+    return <div className="page-shell min-h-screen">{children}</div>;
+  }
+
   const counts = await getCounts();
 
   return (
@@ -13,7 +20,8 @@ async function AdminShell({ children }: { children: React.ReactNode }) {
       <AdminNav
         counts={{
           products: counts.products,
-          ordersNew: counts.ordersNew,
+          orders: counts.orders,
+          ordersNeedsVerify: counts.ordersNeedsVerify,
           enquiriesNew: counts.enquiriesNew,
         }}
       />

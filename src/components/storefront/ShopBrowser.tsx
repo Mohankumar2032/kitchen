@@ -17,6 +17,15 @@ import { ProductCard } from "./ProductCard";
 const DESKTOP_BREAKPOINT = "(min-width: 1024px)";
 const SEARCH_DEBOUNCE_MS = 220;
 
+const shopCategoryParser = parseAsString.withDefault("").withOptions({
+  history: "replace",
+  scroll: false,
+});
+const shopQueryParser = parseAsString.withDefault("").withOptions({
+  history: "replace",
+  scroll: false,
+});
+
 type VisibleParent = {
   parent: CategoryDef;
   children: CategoryDef[];
@@ -136,21 +145,19 @@ export function ShopBrowser({
   initialQuery?: string;
   pageSize: number;
 }) {
-  const [category, setCategory] = useQueryState(
-    "category",
-    parseAsString.withDefault(initialCategory === "all" ? "" : initialCategory)
-  );
-  const [query, setQuery] = useQueryState(
-    "q",
-    parseAsString.withDefault(initialQuery)
-  );
+  const [category, setCategory] = useQueryState("category", shopCategoryParser);
+  const [query, setQuery] = useQueryState("q", shopQueryParser);
 
+  // Empty / missing param = All. Do not fall back to SSR initialCategory after client navigations.
   const activeCategory = category || "all";
-  const [searchInput, setSearchInput] = useState(query || "");
+  const [searchInput, setSearchInput] = useState(
+    () => query || initialQuery || ""
+  );
   const [products, setProducts] = useState(initialProducts);
   const [total, setTotal] = useState(totalFiltered);
   const [page, setPage] = useState(1);
   const [isFetching, setIsFetching] = useState(false);
+  const [isTabLoading, setIsTabLoading] = useState(false);
   const [hasMore, setHasMore] = useState(initialProducts.length < totalFiltered);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const fetchAbortRef = useRef<AbortController | null>(null);
@@ -188,6 +195,7 @@ export function ShopBrowser({
       const controller = new AbortController();
       fetchAbortRef.current = controller;
       setIsFetching(true);
+      if (replace) setIsTabLoading(true);
 
       try {
         const params = new URLSearchParams();
@@ -218,7 +226,11 @@ export function ShopBrowser({
       } catch (error) {
         if ((error as Error).name === "AbortError") return;
       } finally {
-        setIsFetching(false);
+        // Only clear loading for the latest request (rapid tab switches abort older ones).
+        if (fetchAbortRef.current === controller) {
+          setIsFetching(false);
+          if (replace) setIsTabLoading(false);
+        }
       }
     },
     [activeCategory, query, pageSize]
@@ -233,6 +245,12 @@ export function ShopBrowser({
       return;
     }
     if (key === appliedFilterRef.current) return;
+    // Drop stale cards immediately so parent switches never keep old subcategory results.
+    setIsTabLoading(true);
+    setProducts([]);
+    setTotal(0);
+    setPage(1);
+    setHasMore(false);
     void fetchPage(1, true, {
       category: activeCategory,
       q: query || "",
@@ -270,6 +288,7 @@ export function ShopBrowser({
   function selectCategory(next: string) {
     const nextCategory = next === "all" ? "all" : next;
     // Drop stale cards immediately so parent/child switches never show wrong items.
+    setIsTabLoading(true);
     setProducts([]);
     setTotal(0);
     setPage(1);
@@ -295,15 +314,20 @@ export function ShopBrowser({
   }, [categories, categoryCounts]);
 
   const activeMobileParent = useMemo(() => {
-    // Prefer exact parent match, then parent of the active leaf.
+    // Parent selected in top nav → show that parent's type chips (All selected).
     const exact = visibleParents.find(
       ({ parent }) => parent.slug === activeCategory
     );
     if (exact) return exact;
-    return visibleParents.find(({ children }) =>
-      children.some((child) => child.slug === activeCategory)
-    );
-  }, [visibleParents, activeCategory]);
+
+    // Leaf selected → only show chips for THAT leaf's parent (never a stale other tree).
+    const meta = categoryMeta(activeCategory, categories);
+    if (meta.parent) {
+      return visibleParents.find(({ parent }) => parent.slug === meta.parent);
+    }
+
+    return undefined;
+  }, [visibleParents, activeCategory, categories]);
 
   const displayedProducts = useMemo(
     () =>
@@ -387,19 +411,27 @@ export function ShopBrowser({
             </div>
           </div>
 
-          {displayedProducts.length === 0 ? (
+          {isTabLoading ? (
+            <div
+              className="panel flex min-h-[220px] flex-col items-center justify-center gap-3 p-10 sm:min-h-[280px]"
+              role="status"
+              aria-live="polite"
+              aria-label="Loading products"
+            >
+              <span className="logo-loader icon-box-solid h-12 w-12 text-lg">
+                <i className="fa-solid fa-kitchen-set" aria-hidden />
+              </span>
+              <p className="text-[13px] font-medium text-muted">Loading…</p>
+            </div>
+          ) : displayedProducts.length === 0 ? (
             <div className="panel p-10 text-center sm:p-12">
               <i
                 className="fa-solid fa-box-open mb-3 text-2xl text-theme"
                 aria-hidden
               />
-              <p className="font-semibold">
-                {isFetching ? "Loading products…" : "No products found"}
-              </p>
+              <p className="font-semibold">No products found</p>
               <p className="mt-1 text-muted">
-                {isFetching
-                  ? "Fetching the selected category."
-                  : "Try another category or search term."}
+                Try another category or search term.
               </p>
             </div>
           ) : (
