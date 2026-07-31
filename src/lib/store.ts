@@ -38,6 +38,8 @@ const BLOB_LEGACY_PATH = "kitchen/db.json";
 const BLOB_CATALOG_PATH = "kitchen/catalog.json";
 const BLOB_ORDERS_PATH = "kitchen/orders.json";
 const BLOB_PRODUCTS_PREFIX = "kitchen/products/";
+/** Per-order docs — survives orders.json read lag / races on Blob. */
+const BLOB_ORDER_DOCS_PREFIX = "kitchen/order-docs/";
 
 const MAX_WRITE_RETRIES = 8;
 
@@ -236,11 +238,33 @@ async function readBlobJson<T>(blobPath: string): Promise<BlobJsonRead<T> | null
       useCache: false,
       ...blobOpts(),
     });
-    if (!result || result.statusCode !== 200 || !result.stream) return null;
-    const text = await new Response(result.stream).text();
+    if (result && result.statusCode === 200 && result.stream) {
+      const text = await new Response(result.stream).text();
+      return {
+        value: JSON.parse(text) as T,
+        etag: toStrongEtag(result.blob.etag),
+      };
+    }
+  } catch {
+    // fall through to list + URL fetch
+  }
+
+  // get() occasionally lags right after put(); list URL + no-store fetch is fresher.
+  try {
+    const listed = await list({
+      prefix: blobPath,
+      limit: 10,
+      ...blobOpts(),
+    });
+    const blob = listed.blobs.find((b) => b.pathname === blobPath);
+    if (!blob?.url) return null;
+    const res = await fetch(`${blob.url}?t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
     return {
-      value: JSON.parse(text) as T,
-      etag: toStrongEtag(result.blob.etag),
+      value: (await res.json()) as T,
+      etag: toStrongEtag(blob.etag),
     };
   } catch {
     return null;
@@ -285,6 +309,22 @@ async function deleteProductBlob(id: string): Promise<void> {
   } catch {
     // Blob may already be gone; catalog removal is the source of truth.
   }
+}
+
+function orderDocBlobPath(id: string): string {
+  return `${BLOB_ORDER_DOCS_PREFIX}${id}.json`;
+}
+
+/** Durable per-order document — survives orders.json get() lag after writes. */
+async function writeOrderBlob(order: Order): Promise<void> {
+  if (!shouldUseBlobDb()) return;
+  await writeBlobJson(orderDocBlobPath(order.id), order);
+}
+
+async function readOrderBlob(id: string): Promise<Order | null> {
+  if (!shouldUseBlobDb()) return null;
+  const read = await readBlobJson<Order>(orderDocBlobPath(id));
+  return read?.value ?? null;
 }
 
 /**
@@ -539,6 +579,16 @@ function invalidateCatalogCache(): void {
     // Admin pages under cacheComponents
     revalidatePath("/admin", "layout");
     revalidatePath("/admin/products");
+    revalidatePath("/admin/orders");
+  } catch {
+    // Cache APIs are a no-op outside a Next.js request context
+  }
+}
+
+function invalidateOrderPage(orderId: string): void {
+  try {
+    revalidatePath(`/order/${orderId}`);
+    revalidatePath("/admin/orders");
   } catch {
     // Cache APIs are a no-op outside a Next.js request context
   }
@@ -968,11 +1018,25 @@ export async function listOrders(): Promise<Order[]> {
 }
 
 export async function getOrderById(id: string): Promise<Order | null> {
-  const db = await readDb();
-  const order = db.orders.find((o) => o.id === id);
+  // Fresh read + per-order blob fallback: Vercel Blob get() can lag after put().
+  let order: Order | null = null;
+  let products: Product[] = [];
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const db = await readDbFresh();
+    products = db.products;
+    order = db.orders.find((o) => o.id === id) ?? null;
+    if (!order) order = await readOrderBlob(id);
+    if (order) break;
+    if (attempt < 3) {
+      await new Promise((r) => setTimeout(r, 120 * (attempt + 1)));
+    }
+  }
+
   if (!order) return null;
+
   const costByProductId = new Map(
-    db.products.map((p) => [p.id, Number(p.cost) || 0])
+    products.map((p) => [p.id, Number(p.cost) || 0])
   );
   return enrichOrderItemCosts([order], costByProductId)[0] ?? null;
 }
@@ -1063,7 +1127,11 @@ export async function createOrder(payload: CheckoutPayload): Promise<Order> {
 
     db.version = expectedCatalogVersion;
     db.ordersVersion = expectedOrdersVersion;
+    // Write durable order doc first so /order/[id] can resolve even if
+    // orders.json reads briefly lag behind the put().
+    await writeOrderBlob(order);
     await writeDb(db);
+    invalidateOrderPage(order.id);
     return order;
   }
 
@@ -1118,7 +1186,9 @@ export async function updateOrder(
   }
 
   db.orders[index] = next;
+  await writeOrderBlob(next);
   await writeOrdersDb(db);
+  invalidateOrderPage(next.id);
   return db.orders[index];
 }
 

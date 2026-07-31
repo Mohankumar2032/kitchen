@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import { useCart } from "@/components/storefront/CartProvider";
@@ -48,7 +47,6 @@ async function copyText(value: string): Promise<boolean> {
 }
 
 export function CheckoutForm({ settings }: { settings: Settings }) {
-  const router = useRouter();
   const { items, subtotal, clear, ready } = useCart();
   const [step, setStep] = useState<"details" | "payment">("details");
   const [shipping, setShipping] = useState<ShippingDraft>(EMPTY_SHIPPING);
@@ -176,7 +174,8 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
         return;
       }
       clear();
-      router.push(`/order/${data.order.id}`);
+      // Full navigation avoids a stale RSC/cache 404 right after Blob write.
+      window.location.assign(`/order/${data.order.id}`);
     } catch {
       setError("Network error. Please try again.");
       setPending(false);
@@ -222,7 +221,10 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                   className="input"
                   name="customerName"
                   required
-                  defaultValue={shipping.customerName}
+                  value={shipping.customerName}
+                  onChange={(e) =>
+                    setShipping((s) => ({ ...s, customerName: e.target.value }))
+                  }
                 />
               </label>
               <label className="block">
@@ -232,7 +234,13 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                   name="customerPhone"
                   required
                   inputMode="tel"
-                  defaultValue={shipping.customerPhone}
+                  value={shipping.customerPhone}
+                  onChange={(e) =>
+                    setShipping((s) => ({
+                      ...s,
+                      customerPhone: e.target.value,
+                    }))
+                  }
                 />
               </label>
               <label className="block">
@@ -241,7 +249,13 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                   className="input"
                   name="customerEmail"
                   type="email"
-                  defaultValue={shipping.customerEmail}
+                  value={shipping.customerEmail}
+                  onChange={(e) =>
+                    setShipping((s) => ({
+                      ...s,
+                      customerEmail: e.target.value,
+                    }))
+                  }
                 />
               </label>
               <label className="block sm:col-span-2">
@@ -250,7 +264,13 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                   className="input"
                   name="addressLine1"
                   required
-                  defaultValue={shipping.addressLine1}
+                  value={shipping.addressLine1}
+                  onChange={(e) =>
+                    setShipping((s) => ({
+                      ...s,
+                      addressLine1: e.target.value,
+                    }))
+                  }
                 />
               </label>
               <label className="block sm:col-span-2">
@@ -258,7 +278,13 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                 <input
                   className="input"
                   name="addressLine2"
-                  defaultValue={shipping.addressLine2}
+                  value={shipping.addressLine2}
+                  onChange={(e) =>
+                    setShipping((s) => ({
+                      ...s,
+                      addressLine2: e.target.value,
+                    }))
+                  }
                 />
               </label>
               <label className="block">
@@ -267,7 +293,10 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                   className="input"
                   name="city"
                   required
-                  defaultValue={shipping.city}
+                  value={shipping.city}
+                  onChange={(e) =>
+                    setShipping((s) => ({ ...s, city: e.target.value }))
+                  }
                 />
               </label>
               <label className="block">
@@ -276,7 +305,10 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                   className="input"
                   name="state"
                   required
-                  defaultValue={shipping.state}
+                  value={shipping.state}
+                  onChange={(e) =>
+                    setShipping((s) => ({ ...s, state: e.target.value }))
+                  }
                 />
               </label>
               <label className="block">
@@ -286,7 +318,10 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                   name="pincode"
                   required
                   inputMode="numeric"
-                  defaultValue={shipping.pincode}
+                  value={shipping.pincode}
+                  onChange={(e) =>
+                    setShipping((s) => ({ ...s, pincode: e.target.value }))
+                  }
                 />
               </label>
               <label className="block sm:col-span-2">
@@ -294,7 +329,10 @@ export function CheckoutForm({ settings }: { settings: Settings }) {
                 <textarea
                   className="input min-h-[90px]"
                   name="notes"
-                  defaultValue={shipping.notes}
+                  value={shipping.notes}
+                  onChange={(e) =>
+                    setShipping((s) => ({ ...s, notes: e.target.value }))
+                  }
                 />
               </label>
             </div>

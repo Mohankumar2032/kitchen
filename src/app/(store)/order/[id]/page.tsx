@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import { OrderPaymentPanel } from "@/components/storefront/OrderPaymentPanel";
 import { getOrderById, getSettings } from "@/lib/store";
@@ -7,6 +8,7 @@ import { toPublicOrder } from "@/lib/types";
 type Props = { params: Promise<{ id: string }> };
 
 async function OrderConfirmation({ params }: Props) {
+  await connection();
   const { id } = await params;
   const [order, settings] = await Promise.all([
     getOrderById(id),

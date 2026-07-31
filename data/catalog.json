@@ -1,5 +1,5 @@
 {
-  "version": 16,
+  "version": 17,
   "settings": {
     "defaultCommissionPercent": 10,
     "storeName": "Kitchen",
@@ -37,10 +37,10 @@
       "platformPrice": 468,
       "platformName": "Meesho",
       "platformUrl": "https://www.meesho.com/s/p/fuij6i?utm_source=s_w",
-      "stock": 20,
+      "stock": 18,
       "commissionPercent": null,
       "createdAt": "2026-07-26T00:00:00.000Z",
-      "updatedAt": "2026-07-31T06:29:02.880Z",
+      "updatedAt": "2026-07-31T07:23:18.441Z",
       "mrp": 599
     },
     {
